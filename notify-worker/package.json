@@ -1,0 +1,16 @@
+{
+  "name": "sonics-notify",
+  "private": true,
+  "description": "Cloudflare Worker that sends the Sonics app's push notifications",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "devDependencies": {
+    "wrangler": "4.42.0"
+  },
+  "allowScripts": {
+    "esbuild@0.25.4": true,
+    "workerd@1.20251001.0": true
+  }
+}

@@ -50,7 +50,7 @@ Done:
   clean night +$0.3M cap space (collected in the next morning report), win +$0.25M revenue, goal yes +1.5 morale,
   interview +$0.25M revenue +1 morale + endorsement deals at 1, 3, 7, 14... interviews (made-up brands),
   craving beaten +1 morale +$0.1M cap (3/day max), report +0.5, lineup +0.5, slip -8 morale. Morale settles 30% toward
-  50 each night. Morale shifts game margin by (morale-50)/10 points; each stadium level adds 0.75 home points.
+  50 each night. Morale shifts game margin by (morale-50)/15 points; each stadium level adds 0.75 home points.
   Team tab (was Roster) shows the front office: morale meter, cap, revenue, stadium upgrades, sponsors, earnings.
 
 - Contracts and free agency. Cap = real 2026-27 cap ($164.961M). Day-1 salaries = each player's real 2025-26
@@ -73,10 +73,21 @@ Done:
 - Balance check: `node tests/sim.js` plays a perfect year (clean daily, morale 75, best free agents). Last run:
   about 20 wins, then ~45, then ~60.
 
+- Notifications (built, not deployed yet): notify-worker/ is a Cloudflare Worker. The app subscribes (More →
+  Notifications, Home Screen app only) and sends task times + time zone; a cron every 5 minutes sends an empty
+  push at each task time; app/sw.js picks the alert text from the schedule the app saved on the phone. Alerts
+  never name the habit. Keys: `node scripts/make_vapid.js` (private key in notify-worker/.vapid.json, never
+  committed). Deploy: see "Deploying notifications" below. PUSH.server in app/index.html = the Worker URL.
+
 Next:
 - Voice memos for interviews (on hold, owner's call).
-- Real phone notifications.
-  (Notifications need a small free server, e.g. Cloudflare; the owner creates that account.)
+
+## Deploying notifications
+1. `cd notify-worker && npm install` (approve the esbuild/workerd install scripts if npm asks).
+2. `npx wrangler login` (the owner clicks Allow in the browser).
+3. `npx wrangler kv namespace create SUBS` and put the id in wrangler.toml.
+4. Set the secret: the privateJwk from .vapid.json as VAPID_PRIVATE_JWK (`npx wrangler secret put VAPID_PRIVATE_JWK`).
+5. `npx wrangler deploy`, then put the workers.dev URL in PUSH.server in app/index.html and publish.
 
 ## Decisions
 

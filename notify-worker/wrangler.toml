@@ -1,0 +1,16 @@
+# Cloudflare Worker that sends the app's push notifications. Deploy: cd notify-worker && npx wrangler deploy
+name = "sonics-notify"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[vars]
+# The public half of the VAPID key pair (also in app/index.html). The private half is a Worker secret.
+VAPID_PUBLIC_KEY = "BLJrz26_xItwRSOsX8ZvsTnEUNdsRzdUB2Foan3A5VJbMClG9BHuMvR49VPRtkc4R0daSV02t0mDe-ARcr49gVE"
+VAPID_SUBJECT = "https://marshalljackson3.github.io/sonics-quit-tracker/"
+
+[[kv_namespaces]]
+binding = "SUBS"
+id = "__KV_ID__"

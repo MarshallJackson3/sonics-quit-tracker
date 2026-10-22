@@ -3,3 +3,7 @@ tests/screenshot.png
 __pycache__/
 .DS_Store
 data/raw/
+notify-worker/.vapid.json
+notify-worker/.wrangler/
+notify-worker/node_modules/
+.dev.vars

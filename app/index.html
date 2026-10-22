@@ -203,6 +203,11 @@ const DEFAULT_HABITS = {
 const DEFAULT_TIMES = { morning: "07:00", interview: "12:00", main: "20:00" };
 const GOAL_TIMES = ["10:00", "16:00"];
 const CRAVING_SECONDS = 5 * 60;
+// Push notifications: the Cloudflare Worker in notify-worker/ (empty until it's deployed).
+const PUSH = {
+  server: "",
+  publicKey: "BLJrz26_xItwRSOsX8ZvsTnEUNdsRzdUB2Foan3A5VJbMClG9BHuMvR49VPRtkc4R0daSV02t0mDe-ARcr49gVE",
+};
 
 // ---------- helpers ----------
 function mulberry32(a) {
@@ -540,6 +545,7 @@ function render() {
   document.getElementById("newsBadge").innerHTML = unseen > 0 && tab !== "news" ? `<span class="badge">${unseen}</span>` : "";
   const open = openTaskCount();
   document.getElementById("todayBadge").innerHTML = open > 0 ? `<span class="badge">${open}</span>` : "";
+  updateAppBadge();
   document.querySelectorAll("nav button").forEach(b => b.classList.toggle("on", b.dataset.tab === tab));
   ({ today: renderToday, games: renderGames, journal: renderJournal, roster: renderRoster, news: renderNews, more: renderMore })[tab]();
   window.scrollTo(0, 0);
@@ -703,7 +709,7 @@ function renderWizard() {
     } else {
       state = newState(profile, habit);
     }
-    save(); wiz = null; finishWizard();
+    save(); wiz = null; finishWizard(); syncNotifications();
   };
 }
 function finishWizard() {
@@ -1602,6 +1608,104 @@ function removePasscode() {
   document.getElementById("cancelPad").onclick = () => render();
 }
 
+// ---------- notifications ----------
+// The alerts are discreet: they never say what you're quitting.
+function alertSchedule() {
+  const p = state.profile;
+  return [
+    { time: p.times.morning, title: "☀️ Morning report", body: "Last night's result and your cap space are waiting." },
+    { time: p.times.interview, title: "🎤 Media availability", body: "A reporter has a question for you." },
+    ...p.goals.map(g => ({ time: g.time, title: `🎯 ${g.label}`, body: "Quick check-in on today's goal." })),
+    { time: p.times.main, title: "🏀 Tip-off", body: "Time for your nightly check-in." },
+  ];
+}
+function isStandalone() { return !!(window.navigator.standalone || matchMedia("(display-mode: standalone)").matches); }
+function pushSupported() { return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window; }
+async function putNotifyCache(key, obj) {
+  try { await (await caches.open("sonics-notify")).put(key, new Response(JSON.stringify(obj))); } catch (e) {}
+}
+function b64urlToBytes(s) {
+  const b = atob(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4));
+  return Uint8Array.from(b, c => c.charCodeAt(0));
+}
+async function pushSub() {
+  if (!pushSupported()) return null;
+  const reg = await navigator.serviceWorker.ready;
+  return reg.pushManager.getSubscription();
+}
+async function postPush(path, body) {
+  const res = await fetch(PUSH.server + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  return res.json();
+}
+// Save the alert schedule on the phone and send the task times to the server (if notifications are on).
+async function syncNotifications() {
+  if (!state || !pushSupported()) return;
+  await putNotifyCache("schedule", alertSchedule());
+  if (!PUSH.server || !state.notify) return;
+  try {
+    const sub = await pushSub();
+    if (!sub) { state.notify = false; save(); return; }
+    await postPush("/subscribe", { subscription: sub.toJSON(), times: alertSchedule().map(a => a.time),
+      tz: Intl.DateTimeFormat().resolvedOptions().timeZone });
+  } catch (e) {}
+}
+async function enableNotifications() {
+  const perm = await Notification.requestPermission();
+  if (perm !== "granted") { alert("Notifications are blocked. To allow them: iPhone Settings → Notifications → Sonics."); return; }
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = (await reg.pushManager.getSubscription()) ||
+      await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlToBytes(PUSH.publicKey) });
+    state.notify = true; save();
+    await syncNotifications();
+    toast("Notifications on");
+  } catch (e) { alert("Couldn't turn on notifications: " + e.message); }
+  render();
+}
+async function disableNotifications() {
+  try {
+    const sub = await pushSub();
+    if (sub) { await postPush("/unsubscribe", { endpoint: sub.endpoint }).catch(() => {}); await sub.unsubscribe(); }
+  } catch (e) {}
+  state.notify = false; save(); render();
+}
+async function testNotification() {
+  const sub = await pushSub();
+  if (!sub) { alert("Notifications aren't on yet."); return; }
+  await putNotifyCache("test", { at: Date.now() });
+  const r = await postPush("/test", { endpoint: sub.endpoint }).catch(e => ({ error: e.message }));
+  if (r && r.ok) toast("Test sent. It should arrive in a few seconds.");
+  else alert("The test didn't go through" + (r && (r.error || r.status) ? ` (${r.error || r.status})` : "") + ". Try turning notifications off and on.");
+}
+function notifyCard() {
+  const times = alertSchedule().map(a => `${a.title.split(" ")[0]} ${fmtTime(a.time)}`).join(" · ");
+  let body;
+  if (!PUSH.server) body = `<p class="muted" style="margin:0">Coming soon.</p>`;
+  else if (!pushSupported() || !isStandalone()) body = `<p style="margin:0">Open the app from the gold basketball on your Home Screen (not Safari) to turn on notifications. iPhone needs iOS 16.4 or newer.</p>`;
+  else if (state.notify && Notification.permission === "granted") body = `<p style="margin-top:0">On. You'll get: ${esc(times)}.</p>
+      <p class="muted">Alerts never say what you're quitting. Change the times under Your plan.</p>
+      <div class="row"><button class="ghost" id="testPush">Send a test</button><button class="ghost" id="pushOff">Turn off</button></div>`;
+  else body = `<p style="margin-top:0">Get a buzz when each daily task opens: ${esc(times)}.</p>
+      <p class="muted">The notification server only stores your phone's push address, these times and your time zone. Nothing else.</p>
+      <button class="ghost yes" id="pushOn">Turn on notifications</button>`;
+  return `<div class="card"><h2>Notifications</h2>${body}</div>`;
+}
+function wireNotify() {
+  const on = (id, fn) => { const el = document.getElementById(id); if (el) el.onclick = fn; };
+  on("pushOn", enableNotifications);
+  on("pushOff", disableNotifications);
+  on("testPush", testNotification);
+}
+
+// The red number on the app icon (iPhone shows it once notifications are allowed).
+function updateAppBadge() {
+  try {
+    if (!("setAppBadge" in navigator)) return;
+    const n = state && hasStarted() ? openTaskCount() : 0;
+    (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {});
+  } catch (e) {}
+}
+
 // ---------- how it works ----------
 function howItWorks() {
   const f = mainFocus(), money = hasMoney();
@@ -1692,6 +1796,7 @@ function renderMore() {
     ${installed ? "" : `<div class="card"><h2>Put it on your iPhone</h2>
       <p style="margin:0">In Safari, tap the Share button (square with an arrow), then <b>Add to Home Screen</b>.</p></div>`}
     <div class="card guide"><details><summary><h2 style="display:inline">📖 How it works</h2></summary>${howItWorks()}</details></div>
+    ${notifyCard()}
     <div class="card"><h2>Passcode</h2>
       <p style="margin-top:0" class="muted">${state.lock
         ? "On. The app asks for your 4-digit code every time you open it."
@@ -1727,6 +1832,7 @@ function renderMore() {
     </div>`;
   document.getElementById("editPlan").onclick = () => startWizard(true);
   document.getElementById("lockBtn").onclick = () => state.lock ? removePasscode() : setPasscode();
+  wireNotify();
   const code = () => JSON.stringify(state);
   document.getElementById("exportBtn").onclick = () => {
     const blob = new Blob([code()], { type: "application/json" });
@@ -1756,7 +1862,7 @@ if (!state) document.getElementById("nav").classList.add("hidden");
 render();
 
 if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
-  navigator.serviceWorker.register("sw.js").catch(() => {});
+  navigator.serviceWorker.register("sw.js").then(() => syncNotifications()).catch(() => {});
 }
 
 document.addEventListener("visibilitychange", () => {
@@ -1768,7 +1874,7 @@ document.addEventListener("visibilitychange", () => {
 window.__sonics = { get state() { return state; }, teamRating, playerRating, checkIn, render, newState, daysFree, costPerDay,
   tasksFor, openTaskCount, startWizard, makeQuestion, upgradeStadium, award, playGame,
   capRoom, payroll, deadMoney, appeal, priceFor, signFA, availableFAs, interested, dailyForm, lineupRating, starterNames,
-  coachBonus, makeTrade, breakingNews, formAdj, get locked() { return locked; },
+  coachBonus, makeTrade, breakingNews, formAdj, alertSchedule, get locked() { return locked; },
   reset() { state = null; try { localStorage.removeItem(KEY); } catch (e) {} } };
 </script>
 </body>
