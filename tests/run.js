@@ -139,11 +139,56 @@ function check(name, ok, detail = "") {
   s = await S();
   check("season 1 ends after 82 games", s.seasons.length === 1 && s.seasons[0].w + s.seasons[0].l === 82, JSON.stringify(s.seasons[0]));
   check("season 1 is a bad season", s.seasons[0].w <= 25, s.seasons[0].w + " wins");
-  check("season 2 begins", s.season === 2);
+  check("offseason starts after game 82", s.phase === "offseason" && s.season === 1);
+  check("5 biggest contracts expired (1 slip, no extensions)", s.roster.length === 13 && !s.roster.some(p => p.name === "Gabe Vincent"));
+  check("remaining contracts have 1 year left", s.roster.every(p => p.years === 1));
+  const cap = await page.evaluate(() => ({ room: window.__sonics.capRoom(), pay: window.__sonics.payroll(), dead: window.__sonics.deadMoney(), earned: window.__sonics.state.econ.cap }));
+  check("payroll drops to the remaining real salaries", Math.abs(cap.pay - 20.4) < 0.01, cap.pay.toFixed(2));
+  check("cap room = cap + earned - dead money start - payroll", Math.abs(cap.room - (164.961 + cap.earned - (164.961 - 55.09) - cap.pay)) < 0.01, cap.room.toFixed(2));
+  check("offseason check-ins don't play games", s.log.filter(e => !e.game).length === 2 && s.offseasonDays === 2);
   await page.evaluate(() => window.__sonics.render());
   check("streak counts consecutive clean days", (await page.textContent("#streak")) === "82");
 
+  // Free agency.
+  await page.evaluate(() => window.__sonics.render());
+  check("Today shows free agency is open", (await page.$("#goFA")) !== null);
+  await page.click("#goFA");
+  check("free agency list on Team tab", (await page.$$("[data-offer]")).length > 10);
+  const fa = await page.evaluate(() => {
+    const top = window.__sonics.availableFAs()[0];
+    return { ask: top.ask, price: window.__sonics.priceFor(top), appeal: window.__sonics.appeal() };
+  });
+  check("a bad team pays 30% more for top free agents (up to the max contract)",
+    Math.abs(fa.price - Math.min(57.736, Math.round(fa.ask * 1.3 * 100) / 100)) < 0.01, JSON.stringify(fa));
+  check("no asking price above the max contract", await page.evaluate(() => window.__sonics.availableFAs().every(p => window.__sonics.priceFor(p) <= 57.74)));
+  const tooMuch = await page.evaluate(() => window.__sonics.signFA(window.__sonics.availableFAs()[0].id, 2));
+  check("can't sign without cap room", /Not enough cap room/.test(tooMuch || ""), tooMuch);
+  const cheap = await page.evaluate(() => window.__sonics.availableFAs().filter(p => window.__sonics.priceFor(p) <= 1.36).pop());
+  await page.fill("#faSearch", cheap.name);
+  await page.dispatchEvent("#faSearch", "change");
+  check("free agent search works", (await page.$$("[data-offer]")).length >= 1 && (await page.$(`[data-offer="${cheap.id}"]`)) !== null);
+  page.once("dialog", d => d.accept("3"));
+  await page.click(`[data-offer="${cheap.id}"]`);
+  s = await S();
+  check("minimum deal signs with no room", s.roster.length === 14 && s.roster.some(p => p.id === cheap.id && p.years === 3));
+  check("signed player leaves the pool", !(await page.evaluate(id => window.__sonics.availableFAs().some(p => p.id === id), cheap.id)));
+  await page.evaluate(() => { window.__sonics.state.econ.cap += 60; });
+  const big = await page.evaluate(() => {
+    const p = window.__sonics.availableFAs().find(p => window.__sonics.priceFor(p) > 20 && window.__sonics.priceFor(p) < window.__sonics.capRoom());
+    return { id: p.id, err: window.__sonics.signFA(p.id, 2), price: window.__sonics.priceFor(p) };
+  });
+  check("with room, a big free agent signs", big.err === null && (await S()).roster.length === 15, JSON.stringify(big));
+  // Finish the offseason: 5 more check-ins, then season 2.
+  for (let d = 85; d < 90; d++) { await setDay(d); await page.evaluate(() => window.__sonics.checkIn(true)); }
+  s = await S();
+  check("season 2 begins after 7 offseason days", s.phase === "season" && s.season === 2 && s.schedule.length === 82);
+  check("other teams signed some free agents", s.faGone.length > 0, String(s.faGone.length));
+  await setDay(90);
+  await page.evaluate(() => window.__sonics.checkIn(true));
+  check("season 2 game 1 plays", (await S()).log.slice(-1)[0].game.no === 1);
+
   // Savings, 85 days after quitting (Oct 22 -> Jan 15), minus 1 slip day.
+  await page.click("nav button[data-tab=today]");
   await setDay(86, 0);
   const sv = await page.evaluate(() => ({ free: window.__sonics.daysFree(), cost: window.__sonics.costPerDay() }));
   check("cost per day from 12 pouches, 15 per tin, $5.33", Math.abs(sv.cost - 4.264) < 0.001, sv.cost.toFixed(3));
@@ -209,7 +254,7 @@ function check(name, ok, detail = "") {
   await page.fill("#wMorning", "06:30");
   await page.click("#wDone");
   s = await S();
-  check("editing the plan keeps progress", s.profile.times.morning === "06:30" && s.log.length === 84 && s.profile.name === "Marshall");
+  check("editing the plan keeps progress", s.profile.times.morning === "06:30" && s.log.length === 90 && s.profile.name === "Marshall");
 
   // Backup and restore.
   const code = JSON.stringify(s);
@@ -220,7 +265,7 @@ function check(name, ok, detail = "") {
   await page.fill("#importText", code);
   page.once("dialog", d => d.accept());
   await page.click("#importBtn");
-  check("restore brings back progress", (await S()).log.length === 84);
+  check("restore brings back progress", (await S()).log.length === 90);
 
   // A save from before goals and savings existed still loads, and asks for goals.
   await page.evaluate(() => {
@@ -265,6 +310,21 @@ function check(name, ok, detail = "") {
   await typeCode("1234");
   check("passcode can be turned off", !(await S()).lock);
   page.removeAllListeners("dialog");
+
+  // Too many slips: big expiring contracts get extended.
+  await fresh();
+  await setDay(0);
+  await signUp();
+  const ext = await page.evaluate(() => {
+    for (let i = 0; i < 82; i++) {
+      window.__fakeNow = () => new Date(2026, 9, 21 + i, 21);
+      window.__sonics.checkIn(i >= 5);   // 5 slips = 2 over the 3 free ones
+    }
+    const s = window.__sonics.state;
+    return { phase: s.phase, n: s.roster.length, kept: s.roster.filter(p => p.salary > 6).map(p => p.name + ":" + p.years) };
+  });
+  check("5 slips extends the 2 biggest expiring contracts", ext.phase === "offseason" && ext.n === 15 &&
+    ext.kept.includes("Gabe Vincent:1") && ext.kept.includes("Cam Thomas:1"), JSON.stringify(ext));
 
   // Other main battles.
   await fresh();

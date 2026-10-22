@@ -84,6 +84,9 @@ nav button .i { display: block; font-size: 20px; }
 .suspense { text-align: center; padding: 30px 0; font-weight: 700; color: var(--gold); }
 textarea { width: 100%; min-height: 90px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 8px; font: 12px monospace; }
 .hidden { display: none; }
+.fatable td { vertical-align: top; }
+.ghost.sm { padding: 6px 10px; font-size: 14px; }
+.search { width: 100%; padding: 10px; font-size: 16px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; }
 .econ-line { display: flex; justify-content: space-between; gap: 8px; margin: -4px 2px 14px; font-size: 13px; color: var(--muted); }
 .econ-line b { color: var(--gold); }
 .payout { background: var(--panel-2); border-radius: 10px; padding: 10px; margin: 8px 0; font-weight: 700; color: var(--win); }
@@ -229,7 +232,8 @@ function rotation(roster) {
 // Tuned (the 0.75) so a lineup of the worst free agents wins about 15 games a season on average,
 // in line with the worst real NBA teams.
 function teamRating(roster) {
-  return 0.75 * rotation(roster).reduce((sum, p, i) => sum + playerRating(p) * ROTATION_MINUTES[i], 0) / 48;
+  const rot = rotation(roster);
+  return 0.75 * ROTATION_MINUTES.reduce((sum, m, i) => sum + (rot[i] ? playerRating(rot[i]) : -2) * m, 0) / 48;
 }
 
 
@@ -252,6 +256,15 @@ function migrate(s) {
   if (!s.journal) s.journal = [];
   if (!s.interviews) s.interviews = {};
   if (!s.econ) s.econ = newEcon();
+  if (!s.phase) s.phase = "season";
+  if (s.deadStart === undefined) {
+    // Saves from before contracts: give the Day-1 players their real salaries and contract lengths.
+    s.roster.forEach(p => {
+      const d = DATA.day1.roster.find(x => x.name === p.name);
+      if (d && p.salary === undefined) { p.salary = d.salary; p.years = d.years; }
+    });
+    s.deadStart = DATA.day1.cap - DATA.day1.roster.reduce((a, p) => a + p.salary, 0);
+  }
   return s;
 }
 function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
@@ -275,6 +288,8 @@ function newState(profile, habit) {
     journal: [],    // {date, day, q, a, outlet, kind: "interview" | "note"}
     interviews: {}, // {date: {q, outlet, status: "open" | "answered" | "skipped"}}
     econ: newEcon(),
+    phase: "season",  // "season" or "offseason"
+    deadStart: DATA.day1.cap - DATA.day1.roster.reduce((a, p) => a + p.salary, 0),
   };
   s.schedule = makeSchedule(seed, 1);
   const n = (type, text) => s.news.push({ date: start, type, text });
@@ -414,6 +429,17 @@ function playGame(clean) {
 // Log a day (today, or yesterday if it was missed) and play that day's game.
 function checkIn(clean, date = today()) {
   if (entryFor(date) || date < state.habit.quitDate || date > today()) return;
+  if (state.phase === "offseason") {
+    state.log.push({ date, clean, game: null });
+    state.log.sort((a, b) => a.date < b.date ? -1 : 1);
+    if (clean) addPending({ cap: REWARD.cleanNightCap }, "Clean check-in (offseason)", date);
+    else award({ morale: REWARD.slipMorale }, "Slip day", date);
+    state.offseasonDays += 1;
+    othersSign(date);
+    if (state.offseasonDays >= OFFSEASON_DAYS) startNextSeason(date);
+    save();
+    return;
+  }
   const game = playGame(clean);
   state.log.push({ date, clean, game });
   state.log.sort((a, b) => a.date < b.date ? -1 : 1);
@@ -430,17 +456,10 @@ function checkIn(clean, date = today()) {
     text: `Game ${game.no}: Sonics ${verb} the ${game.oppName} ${game.my}–${game.them} ${where}. ${game.top.name} led Seattle with ${game.top.pts}.`
       + (game.slip ? " (Slip day. Tomorrow is a new game.)" : ""),
   });
-  if (seasonGames().length >= SEASON_GAMES) endSeason();
+  if (seasonGames().length >= SEASON_GAMES) startOffseason(date);
   save();
 }
 
-function endSeason() {
-  const r = record(seasonGames());
-  state.seasons.push({ season: state.season, w: r.w, l: r.l });
-  state.news.push({ date: today(), type: "SEASON", text: `Season ${state.season} is over. Final record: ${r.w}–${r.l}. Season ${state.season + 1} tips off next time you check in.` });
-  state.season += 1;
-  state.schedule = makeSchedule(state.seed, state.season);
-}
 
 // ---------- screens ----------
 let tab = "today";
@@ -675,15 +694,21 @@ function statusCard() {
 
 function reportBody() {
   const t = today(), y = addDays(t, -1), n = dayNumber(t);
+  const lines = [];
+  if (state.phase === "offseason") {
+    lines.push(`Day ${n}. Offseason, day ${state.offseasonDays + 1} of ${OFFSEASON_DAYS}.`);
+    lines.push(`Free agency is open: ${fmtM(Math.max(0, capRoom()))} of cap room. Check the Team tab before other teams sign the best players.`);
+    lines.push(`Media availability at ${fmtTime(state.profile.times.interview)}.`);
+    return lines.map(l => `<p style="margin:0 0 6px">${esc(l)}</p>`).join("");
+  }
   const next = state.schedule[seasonGames().length];
   const opp = teamByAbbr(next.opp);
-  const lines = [];
   if (n === 1) {
     lines.push(`Day 1. The Sonics' first season starts tonight, and so does yours.`);
   } else {
     lines.push(`Day ${n}.`);
     const ye = entryFor(y);
-    if (ye) lines.push(`Last night: ${ye.game.result === "W" ? "a win" : "a loss"}, ${ye.game.my}–${ye.game.them} ${ye.game.home ? "vs" : "@"} ${ye.game.opp}.`);
+    if (ye && ye.game) lines.push(`Last night: ${ye.game.result === "W" ? "a win" : "a loss"}, ${ye.game.my}–${ye.game.them} ${ye.game.home ? "vs" : "@"} ${ye.game.opp}.`);
     const gl = state.goalLog[y] || {};
     const goals = state.profile.goals;
     if (goals.length) lines.push(`Yesterday's goals: ${goals.filter(g => gl[g.id] === true).length} of ${goals.length} done.`);
@@ -970,6 +995,154 @@ function frontOfficeCard() {
   <p class="muted">All money here is game money, not real NBA numbers. Sponsors are made-up brands.</p>`;
 }
 
+// ---------- contracts, cap and free agency ----------
+// Real salaries; the cap is the real 2026-27 cap. Dead money, cap you earn and asking prices are game rules.
+const CAP = DATA.day1.cap;
+const FREE_SLIPS = 3;          // slips per season before big expiring contracts start getting extended
+const OFFSEASON_DAYS = 7;      // check-ins between the last game and the next season
+const MAX_ROSTER = 18;
+const MIN_DEAL = DATA.fa.minSalary;
+const OVERPAY = 1.3;           // what a player wants if he thinks your team isn't appealing enough
+
+function payroll() { return state.roster.reduce((a, p) => a + (p.salary || 0), 0); }
+function deadMoney() { return Math.max(0, state.deadStart - state.econ.cap); }
+// Room under the cap. Every bit of cap space you earn pays down dead money; past that, it's extra budget.
+function capRoom() { return CAP + state.econ.cap - state.deadStart - payroll(); }
+function seasonSlips() { return seasonGames().filter(g => g.slip).length; }
+
+// How attractive the Sonics are to free agents (0-100ish): winning, morale, stadium, money, sponsors.
+function appeal() {
+  const last = state.seasons[state.seasons.length - 1];
+  const winPct = last ? last.w / (last.w + last.l) : 0;
+  const e = state.econ;
+  return Math.round(winPct * 50 + (e.morale - 50) * 0.4 + e.stadium * 6 + Math.min(10, e.revenue / 3) + e.deals.length);
+}
+function appealNeeded(ask) { return ask >= 30 ? 40 : ask >= 15 ? 30 : ask >= 8 ? 20 : 0; }
+function priceFor(fa) {
+  if (appeal() >= appealNeeded(fa.ask)) return fa.ask;
+  return Math.min(DATA.fa.maxSalary, Math.round(fa.ask * OVERPAY * 100) / 100);  // never more than the real max contract
+}
+
+// End of the regular season: contracts run down, some expire (or get extended because of slips), free agency opens.
+function startOffseason(date) {
+  const r = record(seasonGames());
+  state.seasons.push({ season: state.season, w: r.w, l: r.l });
+  state.news.push({ date, type: "SEASON", text: `Season ${state.season} is over. Final record: ${r.w}–${r.l}. Free agency is open for ${OFFSEASON_DAYS} days.` });
+  const slips = seasonSlips();
+  const toExtend = Math.max(0, slips - FREE_SLIPS);
+  const expiring = state.roster.filter(p => p.years <= 1).sort((a, b) => b.salary - a.salary);
+  const extended = expiring.slice(0, toExtend);
+  extended.forEach(p => {
+    p.years = 1;   // one more season
+    state.news.push({ date, type: "EXTENDED", text: `With ${slips} slips this season, ownership extended ${p.name}'s contract another year (${fmtM(p.salary)}).` });
+  });
+  const leaving = expiring.filter(p => !extended.includes(p));
+  leaving.forEach(p => state.news.push({ date, type: "EXPIRED", text: `${p.name}'s contract is up. ${fmtM(p.salary)} comes off the books.` }));
+  state.roster = state.roster.filter(p => !leaving.includes(p));
+  state.roster.forEach(p => { if (!extended.includes(p)) p.years -= 1; });
+  state.phase = "offseason";
+  state.offseasonDays = 0;
+  state.faGone = [];
+}
+
+function startNextSeason(date) {
+  state.season += 1;
+  state.schedule = makeSchedule(state.seed, state.season);
+  state.phase = "season";
+  state.news.push({ date, type: "SEASON", text: `Season ${state.season} tips off tonight. Payroll ${fmtM(payroll())}, ${state.roster.length} players.` });
+}
+
+// Each offseason day, other teams sign some of the best free agents left.
+function othersSign(date) {
+  const rand = mulberry32(state.seed + hashStr(date));
+  const left = availableFAs().slice(0, 60);
+  left.forEach(p => {
+    if (rand() < 0.08) {
+      state.faGone.push(p.id);
+      state.news.push({ date, type: "FA", text: `${p.name} signed with another team.` });
+    }
+  });
+}
+
+function availableFAs() {
+  const signed = new Set(state.roster.map(p => p.id).filter(Boolean));
+  const gone = new Set(state.faGone || []);
+  return DATA.fa.players.filter(p => !signed.has(p.id) && !gone.has(p.id));
+}
+
+function signFA(id, years) {
+  const fa = DATA.fa.players.find(p => p.id === id);
+  if (!fa || state.phase !== "offseason") return "Free agency is closed.";
+  if (state.roster.length >= MAX_ROSTER) return `Your roster is full (${MAX_ROSTER}).`;
+  const price = priceFor(fa);
+  if (price > capRoom() && price > MIN_DEAL + 0.01) return `Not enough cap room: you have ${fmtM(Math.max(0, capRoom()))}.`;
+  state.roster.push({ id: fa.id, name: fa.name, pos: fa.pos, g: fa.g, mp: fa.mp, pts: fa.pts, bpm: fa.bpm, vorp: fa.vorp,
+    salary: price, years, signed: state.season + 1 });
+  state.news.push({ date: today(), type: "SIGNED", text: `Sonics sign ${fa.name} to a ${years}-year deal at ${fmtM(price)} a year.` });
+  award({ morale: 3 }, `Signed ${fa.name}`);
+  save();
+  return null;
+}
+
+function contractsCard() {
+  const expiring = state.roster.filter(p => p.years <= 1).sort((a, b) => b.salary - a.salary);
+  const slips = seasonSlips();
+  const passes = Math.max(0, FREE_SLIPS - slips);
+  return `<div class="card"><h2>Payroll</h2>
+    <ul class="list">
+      <li><span class="grow">Player salaries (real)</span><b>${fmtM(payroll())}</b></li>
+      <li><span class="grow">Dead money <span class="muted">(game; paid down by cap space you earn)</span></span><b>${fmtM(deadMoney())}</b></li>
+      <li><span class="grow">Cap room</span><b class="${capRoom() > 0 ? "W" : ""}">${fmtM(Math.max(0, capRoom()))}</b></li>
+    </ul>
+    <p class="muted" style="margin-bottom:0">Salary cap: ${fmtM(CAP)} (the real 2026-27 cap).</p>
+  </div>
+  ${state.phase !== "offseason" && expiring.length ? `<div class="card"><h2>Contract watch</h2>
+    <p style="margin-top:0">${expiring.length} contracts expire after this season, worth ${fmtM(expiring.reduce((a, p) => a + p.salary, 0))}.</p>
+    <p class="muted">Slips this season: <b>${slips}</b>. ${passes > 0 ? `${passes} more and you're still fine.` : "From here, each slip extends one of these contracts another year, starting with the biggest."}</p>
+  </div>` : ""}`;
+}
+
+let faFilter = { pos: "All", q: "" };
+function freeAgencyCard() {
+  const left = OFFSEASON_DAYS - state.offseasonDays;
+  const posMatch = p => faFilter.pos === "All" || p.pos.split("-").some(x => x === faFilter.pos || (faFilter.pos === "G" && /G/.test(x)) || (faFilter.pos === "F" && /F/.test(x)));
+  const list = availableFAs().filter(posMatch).filter(p => !faFilter.q || p.name.toLowerCase().includes(faFilter.q.toLowerCase())).slice(0, 80);
+  const ap = appeal();
+  return `<div class="card fa"><h2>Free agency · ${left} day${left === 1 ? "" : "s"} left</h2>
+    <p style="margin-top:0">Cap room: <b class="W">${fmtM(Math.max(0, capRoom()))}</b> · Roster ${state.roster.length}/${MAX_ROSTER} · Team appeal <b>${ap}</b></p>
+    <p class="muted">Better players want an appealing team (winning, morale, stadium, sponsors). If yours isn't there yet, they'll ask for ${Math.round((OVERPAY - 1) * 100)}% more. Minimum deals (${fmtM(MIN_DEAL)}) can be signed even with no cap room. Other teams sign players every day.</p>
+    <div class="picks" style="margin-bottom:8px">${["All", "PG", "SG", "SF", "PF", "C"].map(p => `<button class="pick ${faFilter.pos === p ? "on" : ""}" data-fapos="${p}">${p}</button>`).join("")}</div>
+    <input id="faSearch" class="search" placeholder="Search by name" value="${esc(faFilter.q)}">
+    <table class="fatable"><thead><tr><th>Player</th><th class="n">PTS</th><th class="n">Asks</th><th></th></tr></thead><tbody>
+    ${list.map(p => {
+      const price = priceFor(p), wants = price > p.ask;
+      const afford = price <= capRoom() || price <= MIN_DEAL + 0.01;
+      return `<tr><td><b>${esc(p.name)}</b><br><span class="muted">${p.pos} · ${p.age} · BPM ${p.bpm.toFixed(1)}${p.option ? " · " + p.option : ""}</span></td>
+        <td class="n">${p.pts.toFixed(1)}</td>
+        <td class="n">${fmtM(price)}${wants ? `<br><span class="muted">wants a winner</span>` : ""}</td>
+        <td class="n"><button class="ghost sm" data-offer="${p.id}" ${afford && state.roster.length < MAX_ROSTER ? "" : "disabled"}>Sign</button></td></tr>`;
+    }).join("")}
+    </tbody></table>
+    <p class="muted">Real players and 2025-26 stats. Projected 2027 free agents: contracts ending after 2026-27, or with a 2027-28 option. Asking prices are estimates.</p>
+  </div>`;
+}
+
+function wireFreeAgency() {
+  document.querySelectorAll("[data-fapos]").forEach(b => b.onclick = () => { faFilter.pos = b.dataset.fapos; render(); });
+  const s = document.getElementById("faSearch");
+  if (s) s.onchange = () => { faFilter.q = s.value; render(); };
+  document.querySelectorAll("[data-offer]").forEach(b => b.onclick = () => {
+    const fa = DATA.fa.players.find(p => p.id === b.dataset.offer);
+    const price = priceFor(fa);
+    const yrs = prompt(`Sign ${fa.name} at ${fmtM(price)} a year.\n\nHow many years? (1 to 4)`, "2");
+    if (yrs === null) return;
+    const n = Math.max(1, Math.min(4, parseInt(yrs, 10) || 1));
+    const err = signFA(fa.id, n);
+    if (err) { alert(err); return; }
+    render(); toast(`Signed ${fa.name}! +3 morale`);
+  });
+}
+
 function taskRow(icon, text, cls = "") { return `<div class="task-row ${cls}">${icon} ${text}</div>`; }
 
 function taskCard(task) {
@@ -993,7 +1166,18 @@ function taskCard(task) {
       <div class="row"><button class="ghost yes" data-goal-yes="${g.id}">Yes</button>
       <button class="ghost" data-goal-no="${g.id}">Not today</button></div></div>`;
   }
-  // The nightly check-in that plays the game.
+  // The nightly check-in. In the offseason there's no game.
+  if (state.phase === "offseason" || (task.id === "main" && task.done && !todaysEntry().game)) {
+    const catchupO = task.id === "catchup";
+    if (task.id === "main" && task.done) return taskRow("✅", "Clean day logged. Offseason workouts are on.");
+    if (task.locked) return taskRow("🔒", `Nightly check-in · ${fmtTime(task.time)}`, "locked");
+    return `<div class="card task">
+      <h2>${catchupO ? `Last night's check-in (${prettyDate(task.date)})` : `Offseason · day ${state.offseasonDays + 1} of ${OFFSEASON_DAYS}`}</h2>
+      <p style="margin-top:0">${esc(catchupO ? f.q.replace("today", "yesterday") : f.q)}</p>
+      <button class="big" data-clean="${task.date}">✅ Yes</button>
+      <button class="slip" data-slip="${task.date}">${f.type === "quit" ? "No, I slipped" : "Not today"}</button>
+    </div>`;
+  }
   const nextNo = seasonGames().length + 1;
   const opp = teamByAbbr(state.schedule[nextNo - 1].opp);
   const home = state.schedule[nextNo - 1].home;
@@ -1020,6 +1204,11 @@ function renderToday() {
   }
   if (mainFocus().type === "quit") html += `<button class="crave" id="craveBtn">😤 I'm having a craving</button>`;
   const tasks = tasksFor();
+  if (state.phase === "offseason") {
+    html += `<div class="card task"><h2>🖊️ Free agency is open</h2>
+      <p style="margin-top:0">${fmtM(Math.max(0, capRoom()))} of cap room · ${OFFSEASON_DAYS - state.offseasonDays} day${OFFSEASON_DAYS - state.offseasonDays === 1 ? "" : "s"} left. Other teams are signing players every day.</p>
+      <button class="ghost yes" id="goFA">Go to free agency</button></div>`;
+  }
   if (!hasStarted()) {
     html += `<div class="card"><h2>Day 1 is ${prettyDate(state.habit.quitDate)}</h2>
       <p style="margin:0">Your first tasks and your first game start on day 1. Check back then.</p></div>`;
@@ -1035,6 +1224,7 @@ function renderToday() {
   const on = (sel, fn) => document.querySelectorAll(sel).forEach(el => el.onclick = () => fn(el));
   on("#pickGoalsBtn", () => startWizard(true, 2));
   on("#craveBtn", startCraving);
+  on("#goFA", () => { tab = "roster"; render(); });
   on("#reportBtn", () => {
     state.reportsRead[today()] = true;
     const got = collectPending();
@@ -1117,7 +1307,7 @@ function tipOff(clean, date = today()) {
   main.innerHTML = `<div class="card suspense">🏀 Tip-off…</div>`;
   setTimeout(() => {
     checkIn(clean, date);
-    if (date === today()) { justPlayed = true; render(); return; }
+    if (date === today() || !entryFor(date).game) { justPlayed = true; render(); return; }
     // A catch-up game for yesterday: show its result, then go back to today.
     main.innerHTML = gameCard(entryFor(date).game, true) + `<button class="big" id="contBtn">Continue</button>`;
     document.getElementById("contBtn").onclick = () => render();
@@ -1228,17 +1418,19 @@ function renderGames() {
 
 function renderRoster() {
   const rows = state.roster.slice().sort((a, b) => playerRating(b) - playerRating(a)).map(p => `<tr>
-    <td>${esc(p.name)}</td><td>${p.pos}</td><td class="n">${p.pts.toFixed(1)}</td><td class="n">${p.vorp.toFixed(1)}</td></tr>`).join("");
-  main.innerHTML = frontOfficeCard() + `
+    <td>${esc(p.name)}<br><span class="muted">${p.pos} · ${fmtM(p.salary || 0)} · ${p.years || 0} yr${p.years === 1 ? "" : "s"}</span></td>
+    <td class="n">${p.pts.toFixed(1)}</td><td class="n">${p.vorp.toFixed(1)}</td></tr>`).join("");
+  main.innerHTML = (state.phase === "offseason" ? freeAgencyCard() : "") + frontOfficeCard() + contractsCard() + `
     <div class="card"><h2>Staff</h2>
       <p style="margin:0">Head coach: <b>${esc(state.coach.name)}</b> <span class="muted">(${esc(state.coach.record)})</span></p>
       <p style="margin:6px 0 0">General manager: <b>${esc(state.gm.name)}</b></p>
     </div>
     <div class="card"><h2>Roster (${state.roster.length})</h2>
-      <table><thead><tr><th>Player</th><th>Pos</th><th class="n">PTS</th><th class="n">VORP</th></tr></thead>
+      <table><thead><tr><th>Player · salary · years left</th><th class="n">PTS</th><th class="n">VORP</th></tr></thead>
       <tbody>${rows}</tbody></table>
       <p class="muted">PTS and VORP are real 2025-26 stats (Basketball-Reference). VORP below 0 means worse than a replacement-level player.</p>
     </div>`;
+  wireFreeAgency();
   const up = document.getElementById("upgradeBtn");
   if (up) up.onclick = () => {
     const next = STADIUM[state.econ.stadium + 1];
@@ -1332,7 +1524,8 @@ document.addEventListener("visibilitychange", () => {
 
 // For testing only.
 window.__sonics = { get state() { return state; }, teamRating, playerRating, checkIn, render, newState, daysFree, costPerDay,
-  tasksFor, openTaskCount, startWizard, makeQuestion, upgradeStadium, award, playGame, get locked() { return locked; },
+  tasksFor, openTaskCount, startWizard, makeQuestion, upgradeStadium, award, playGame,
+  capRoom, payroll, deadMoney, appeal, priceFor, signFA, availableFAs, get locked() { return locked; },
   reset() { state = null; try { localStorage.removeItem(KEY); } catch (e) {} } };
 </script>
 </body>

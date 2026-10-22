@@ -53,9 +53,17 @@ Done:
   50 each night. Morale shifts game margin by (morale-50)/10 points; each stadium level adds 0.75 home points.
   Team tab (was Roster) shows the front office: morale meter, cap, revenue, stadium upgrades, sponsors, earnings.
 
+- Contracts and free agency. Cap = real 2026-27 cap ($164.961M). Day-1 salaries = each player's real 2025-26
+  earnings, or the 2026-27 minimum ($1.358M) for 10-day/two-way players; payroll $55.09M, the rest is game
+  "dead money" ($109.87M) that earned cap space pays down. The 5 biggest deals ($34.69M) expire after season 1;
+  every slip past 3 in a season extends one of them a year. After game 82: a 7-check-in offseason with free
+  agency (Team tab). Pool = data/fa2027.json (scripts/fetch_fa.py): real players whose contracts end after
+  2026-27 or have a 2027-28 option, rated on 2025-26 stats; asking prices are estimates, +30% (capped at the
+  max contract) if team appeal is too low; other teams sign ~8% of the top 60 each day.
+
 Next, in order:
 - Voice memos for interviews (on hold, owner's call).
-4. Lineup, salaries/cap (real salaries + labeled dead money), offseason free agency, surprise trades/hires.
+4. Lineup, surprise in-season trades and coach/GM hires.
 5. Real phone notifications (needs a small free server, e.g. Cloudflare; the owner creates that account).
 
 ## Decisions
