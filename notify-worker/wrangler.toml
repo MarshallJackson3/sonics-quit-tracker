@@ -13,4 +13,4 @@ VAPID_SUBJECT = "https://marshalljackson3.github.io/sonics-quit-tracker/"
 
 [[kv_namespaces]]
 binding = "SUBS"
-id = "__KV_ID__"
+id = "aacd40b9998d4f8d89b5c18ed92c1c8f"

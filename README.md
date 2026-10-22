@@ -73,7 +73,7 @@ Done:
 - Balance check: `node tests/sim.js` plays a perfect year (clean daily, morale 75, best free agents). Last run:
   about 20 wins, then ~45, then ~60.
 
-- Notifications (built, not deployed yet): notify-worker/ is a Cloudflare Worker. The app subscribes (More →
+- Notifications (live at https://sonics-notify.mjsonics.workers.dev, Cloudflare account atfailing@gmail.com): notify-worker/ is a Cloudflare Worker. The app subscribes (More →
   Notifications, Home Screen app only) and sends task times + time zone; a cron every 5 minutes sends an empty
   push at each task time; app/sw.js picks the alert text from the schedule the app saved on the phone. Alerts
   never name the habit. Keys: `node scripts/make_vapid.js` (private key in notify-worker/.vapid.json, never
