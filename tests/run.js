@@ -72,7 +72,15 @@ function check(name, ok, detail = "") {
   await page.click("#reportBtn");
   await setDay(1, 21);
   await page.evaluate(() => window.__sonics.render());
-  check("9 PM: three open tasks", await page.evaluate(() => window.__sonics.openTaskCount()) === 3);
+  check("9 PM: four open tasks", await page.evaluate(() => window.__sonics.openTaskCount()) === 4);
+  check("day 1 interview question", (await page.textContent(".quote")).includes("Day one"));
+  await page.click("#ivSend");
+  check("empty answer isn't saved", (await S()).journal.length === 0);
+  await page.fill("#ivText", "Today is the day. I'm done with pouches.");
+  await page.click("#ivSend");
+  s = await S();
+  check("interview answer saved to journal", s.journal.length === 1 && s.journal[0].a.includes("done with pouches") && s.journal[0].day === 1);
+  check("interview makes a news item", s.news.some(n => n.type === "PRESSER" && n.text.includes("President Marshall")));
   await page.click("[data-goal-yes=workout]");
   await page.click("[data-goal-no=skill]");
   s = await S();
@@ -94,6 +102,9 @@ function check(name, ok, detail = "") {
   check("slip day is a loss", s.log[1].game.result === "L" && s.log[1].game.slip);
   check("slip resets streak", (await page.textContent("#streak")) === "0");
   check("slip keeps roster", s.roster.length === 18);
+
+  await setDay(3, 13);
+  check("after a slip, the interview asks about it", (await page.evaluate(() => window.__sonics.makeQuestion("2026-10-24"))).includes("Tough day"));
 
   // Day 3 skipped. On day 4, last night's check-in is still waiting.
   await setDay(4, 9);
@@ -132,11 +143,26 @@ function check(name, ok, detail = "") {
   await page.click("#okBtn");
 
   // Every tab renders, with no sideways scrolling on a phone.
-  for (const t of ["games", "roster", "news", "more", "today"]) {
+  for (const t of ["games", "journal", "roster", "news", "more", "today"]) {
     await page.click(`nav button[data-tab=${t}]`);
     const wide = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
     check(`${t} tab fits phone width`, !wide);
   }
+
+  // Journal: shows the interview, add a note, delete it.
+  await page.click("nav button[data-tab=journal]");
+  check("journal shows the interview", (await page.textContent("main")).includes("done with pouches"));
+  await page.fill("#noteText", "Craving at lunch, went for a walk.");
+  await page.click("#noteSave");
+  check("note saved", (await S()).journal.length === 2 && (await page.textContent("main")).includes("went for a walk"));
+  page.once("dialog", d => d.accept());
+  await page.click('[data-del="1"]');
+  check("note deleted", (await S()).journal.length === 1);
+  // Interview skip.
+  await setDay(87, 13);
+  await page.click("nav button[data-tab=today]");
+  await page.click("#ivSkip");
+  check("interview can be skipped", (await S()).interviews["2027-01-16"].status === "skipped" && (await S()).journal.length === 1);
 
   // Edit the plan from More: change the morning report time.
   await page.click("nav button[data-tab=more]");
@@ -162,7 +188,7 @@ function check(name, ok, detail = "") {
 
   // A save from before goals and savings existed still loads, and asks for goals.
   await page.evaluate(() => {
-    const s = window.__sonics.state; delete s.habit; delete s.cravings; delete s.profile; delete s.goalLog; delete s.reportsRead;
+    const s = window.__sonics.state; delete s.habit; delete s.cravings; delete s.profile; delete s.goalLog; delete s.reportsRead; delete s.journal; delete s.interviews;
     localStorage.setItem("sonics.v1", JSON.stringify(s));
   });
   await page.reload();
@@ -170,6 +196,7 @@ function check(name, ok, detail = "") {
   await page.evaluate(() => window.__sonics.render());
   s = await S();
   check("old saves get a nicotine plan added", s.profile.main === "nicotine" && !!s.habit && Array.isArray(s.cravings));
+  check("old saves get the interview", s.profile.times.interview === "12:00" && Array.isArray(s.journal));
   check("old saves are asked to pick goals", (await page.$("#pickGoalsBtn")) !== null);
   await page.click("#pickGoalsBtn");
   await page.click("[data-goal=reading]");

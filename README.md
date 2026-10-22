@@ -42,8 +42,11 @@ Done:
 - Optional 4-digit passcode (More → Passcode). Locks whenever you leave the app. Stored hashed on the device;
   a privacy screen, not encryption. A forgotten passcode can't be recovered (erase + restore a backup).
 
+- Media interviews: a daily task (noon by default) with a question that fits the day (day 1, after a slip,
+  first win, streak and savings milestones, losing/winning streaks, or a rotating everyday question).
+  Answers (typed or iPhone dictation) go to the Journal tab, which also takes free notes. Outlets are made up.
+
 Next, in order:
-1. Media interviews (noon task, journal prompt) and a Journal tab; typing or iPhone dictation.
 2. Voice memos for interviews.
 3. Morale, cap money, endorsements, stadium; morale affects games; rewards paid next morning.
 4. Lineup, salaries/cap (real salaries + labeled dead money), offseason free agency, surprise trades/hires.

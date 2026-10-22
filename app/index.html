@@ -84,6 +84,13 @@ nav button .i { display: block; font-size: 20px; }
 .suspense { text-align: center; padding: 30px 0; font-weight: 700; color: var(--gold); }
 textarea { width: 100%; min-height: 90px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 8px; font: 12px monospace; }
 .hidden { display: none; }
+.quote { font-style: italic; margin: 0 0 10px; }
+textarea.answer { min-height: 110px; font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+.entry { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.entry:last-child { border-bottom: 0; }
+.entry .ans { margin: 0 0 6px; white-space: pre-wrap; }
+.linkbtn { background: none; color: var(--muted); padding: 0; font-size: 13px; text-decoration: underline; }
+nav button { min-width: 0; }
 .lock { text-align: center; }
 .lock .err { color: var(--loss); }
 .dots { display: flex; justify-content: center; gap: 14px; margin: 14px 0 18px; }
@@ -120,6 +127,7 @@ a { color: var(--gold); overflow-wrap: anywhere; }
 <nav id="nav">
   <button data-tab="today"><span class="i">🏀</span>Today<span id="todayBadge"></span></button>
   <button data-tab="games"><span class="i">📅</span>Games</button>
+  <button data-tab="journal"><span class="i">🎤</span>Journal</button>
   <button data-tab="roster"><span class="i">👥</span>Roster</button>
   <button data-tab="news"><span class="i">📰</span>News<span id="newsBadge"></span></button>
   <button data-tab="more"><span class="i">⚙️</span>More</button>
@@ -165,7 +173,7 @@ const DEFAULT_HABITS = {
   weed: { kind: "weed", perDay: 2, perPack: 1, packPrice: 5 },
   drinking: { kind: "drinks", perDay: 3, perPack: 1, packPrice: 6 },
 };
-const DEFAULT_TIMES = { morning: "07:00", main: "20:00" };
+const DEFAULT_TIMES = { morning: "07:00", interview: "12:00", main: "20:00" };
 const GOAL_TIMES = ["10:00", "16:00"];
 const CRAVING_SECONDS = 5 * 60;
 
@@ -230,6 +238,9 @@ function migrate(s) {
   }
   if (!s.goalLog) s.goalLog = {};
   if (!s.reportsRead) s.reportsRead = {};
+  if (!s.profile.times.interview) s.profile.times.interview = DEFAULT_TIMES.interview;
+  if (!s.journal) s.journal = [];
+  if (!s.interviews) s.interviews = {};
   return s;
 }
 function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
@@ -250,6 +261,8 @@ function newState(profile, habit) {
     cravings: [],   // {at, beaten}
     goalLog: {},    // {date: {goalId: true/false}}
     reportsRead: {},// {date: true}
+    journal: [],    // {date, day, q, a, outlet, kind: "interview" | "note"}
+    interviews: {}, // {date: {q, outlet, status: "open" | "answered" | "skipped"}}
   };
   s.schedule = makeSchedule(seed, 1);
   const n = (type, text) => s.news.push({ date: start, type, text });
@@ -351,6 +364,8 @@ function tasksFor() {
     const ans = (state.goalLog[t] || {})[g.id];
     add({ id: "goal-" + g.id, kind: "goal", goal: g, time: g.time, done: ans !== undefined, answer: ans });
   });
+  const iv = state.interviews[t];
+  add({ id: "interview", kind: "interview", time: p.times.interview, done: !!iv && iv.status !== "open" });
   add({ id: "main", kind: "main", date: t, time: p.times.main, done: !!todaysEntry() });
   return tasks.sort((a, b) => (a.time === null ? -1 : b.time === null ? 1 : minutesOf(a.time) - minutesOf(b.time)));
 }
@@ -427,7 +442,7 @@ function render() {
   const open = openTaskCount();
   document.getElementById("todayBadge").innerHTML = open > 0 ? `<span class="badge">${open}</span>` : "";
   document.querySelectorAll("nav button").forEach(b => b.classList.toggle("on", b.dataset.tab === tab));
-  ({ today: renderToday, games: renderGames, roster: renderRoster, news: renderNews, more: renderMore })[tab]();
+  ({ today: renderToday, games: renderGames, journal: renderJournal, roster: renderRoster, news: renderNews, more: renderMore })[tab]();
   window.scrollTo(0, 0);
 }
 
@@ -498,6 +513,7 @@ function readWizardStep() {
     wiz.habit.quitDate = v("wQuit") || today();
     wiz.times.morning = v("wMorning") || DEFAULT_TIMES.morning;
     wiz.times.main = v("wMain") || DEFAULT_TIMES.main;
+    wiz.times.interview = v("wInterview") || DEFAULT_TIMES.interview;
     wiz.goals.forEach(g => { g.time = v("gt-" + g.id) || g.time; });
   }
 }
@@ -546,6 +562,7 @@ function renderWizard() {
         <p class="muted" style="margin:14px 0 6px">When should each daily task show up?</p>
         <label>☀️ Morning report<input id="wMorning" type="time" value="${wiz.times.morning}"></label>
         ${wiz.goals.map(g => `<label>🎯 ${esc(g.label)}<input id="gt-${g.id}" type="time" value="${g.time}"></label>`).join("")}
+        <label>🎤 Media interview<input id="wInterview" type="time" value="${wiz.times.interview || DEFAULT_TIMES.interview}"></label>
         <label>🏀 Nightly check-in (${esc(f.label.toLowerCase())}) and game<input id="wMain" type="time" value="${wiz.times.main}"></label>
       </div>
       <button class="big" id="wDone" style="margin-top:6px">${wiz.edit ? "Save my plan" : "Start my journey"}</button>${back}</div>`;
@@ -648,8 +665,144 @@ function reportBody() {
     const goals = state.profile.goals;
     if (goals.length) lines.push(`Yesterday's goals: ${goals.filter(g => gl[g.id] === true).length} of ${goals.length} done.`);
   }
+  lines.push(`Media availability at ${fmtTime(state.profile.times.interview)}.`);
   lines.push(`Tonight: ${next.home ? "home vs" : "away @"} the ${opp.name} (${opp.w}–${opp.l} last season).`);
   return lines.map(l => `<p style="margin:0 0 6px">${esc(l)}</p>`).join("");
+}
+
+// ---------- media interviews (the journal) ----------
+// Made-up outlets; the questions are prompts for you to reflect on your day.
+const OUTLETS = ["Emerald City Hoops Report", "Puget Sound Sports Radio", "The Sonic Boom Podcast", "Rain City Courtside", "Space Needle Sports Desk"];
+const STREAK_MILESTONES = [3, 7, 14, 21, 30, 45, 60, 90, 100, 120, 150, 180, 200, 250, 300, 365];
+const MONEY_MILESTONES = [25, 50, 100, 250, 500, 750, 1000, 1500, 2000];
+
+// The everyday questions. {x} is filled in below.
+const GENERAL_QUESTIONS = [
+  "The beginning of the season is tough. How do you keep motivated in the face of the battle ahead?",
+  "What was the hardest moment today, and how did you handle it?",
+  "Who's been in your corner lately?",
+  "What's one thing that's better now than when you started?",
+  "When a craving hits, what's the game plan?",
+  "If you could talk to yourself on day one, what would you say?",
+  "What are you most proud of this week?",
+  "What triggers have you noticed lately, and how are you dealing with them?",
+  "How are you sleeping and feeling physically these days?",
+  "What's the long-term vision for this franchise, and for you?",
+  "Give us one word for how today went, and explain it.",
+  "What did you do today that future-you will thank you for?",
+  "Your team is {record}. The fans are restless. What do you tell them?",
+  "What's been the biggest surprise since you started?",
+  "What's one thing you're looking forward to this week?",
+  "What does a good day look like for you right now?",
+  "Where do you feel the most pressure, and how do you handle it?",
+  "What's a habit you've picked up that's helping?",
+  "How do you reward yourself for a good day?",
+  "What would you want your friends to know about how this is going?",
+];
+
+function hashStr(str) { let h = 0; for (const c of str) h = (h * 31 + c.charCodeAt(0)) | 0; return Math.abs(h); }
+
+// Picks today's question from what's going on. The first match wins; otherwise a rotating everyday one.
+function makeQuestion(date) {
+  const name = state.profile.name;
+  const f = mainFocus();
+  const n = dayNumber(date);
+  const y = addDays(date, -1);
+  const ye = entryFor(y);
+  const games = seasonGames();
+  const r = record(games);
+  const st = streak();
+  const last = games[games.length - 1];
+  const ask = (q) => q;
+  if (n === 1) return ask(`Day one. The franchise is starting from scratch, and so are you. What made today the day?`);
+  if (ye && !ye.clean) return ask(`Tough day yesterday. What happened, and what's the plan to bounce back?`);
+  if (last && last.result === "W" && r.w === 1 && ye && ye.game === last)
+    return ask(`${last.top.name} led the way to the franchise's first win last night, ${last.my}–${last.them}. How does it feel to finally get one?`);
+  if (STREAK_MILESTONES.includes(st)) {
+    const label = st === 7 ? "one full week" : st === 14 ? "two weeks" : st === 30 ? "a whole month" : st === 365 ? "an entire year" : `${st} days`;
+    return ask(`That's ${label} ${f.type === "quit" ? f.free.toLowerCase() : "in a row"}. What's different about you now compared to day one?`);
+  }
+  if (hasMoney()) {
+    const saved = daysFree() * costPerDay();
+    const crossed = MONEY_MILESTONES.filter(m => saved >= m).pop();
+    if (crossed && !state.journal.some(j => j.milestone === "money" + crossed))
+      return { q: `You've saved more than $${crossed} by not buying ${HABITS[state.habit.kind].units}. What are you going to do with it?`, milestone: "money" + crossed };
+  }
+  let lossRun = 0; for (let i = games.length - 1; i >= 0 && games[i].result === "L"; i--) lossRun++;
+  let winRun = 0; for (let i = games.length - 1; i >= 0 && games[i].result === "W"; i--) winRun++;
+  if (lossRun >= 5 && lossRun % 5 === 0) return ask(`That's ${lossRun} straight losses. How do you keep the locker room, and yourself, believing?`);
+  if (winRun >= 3) return ask(`${winRun} wins in a row! What's clicking right now?`);
+  const goals = state.profile.goals;
+  const pool = GENERAL_QUESTIONS.concat(goals.map(g => `How's the ${g.label.toLowerCase()} going? Be honest.`));
+  const recent = state.journal.slice(-10).map(j => j.q);
+  let i = hashStr(date + state.seed) % pool.length;
+  for (let k = 0; k < pool.length && recent.includes(pool[i].replace("{record}", `${r.w}–${r.l}`)); k++) i = (i + 1) % pool.length;
+  return ask(pool[i].replace("{record}", `${r.w}–${r.l}`));
+}
+
+// Today's interview, made once and then kept for the day.
+function interviewFor(date) {
+  if (!state.interviews[date]) {
+    const made = makeQuestion(date);
+    const q = typeof made === "string" ? { q: made } : made;
+    state.interviews[date] = { ...q, outlet: OUTLETS[hashStr(date) % OUTLETS.length], status: "open" };
+    save();
+  }
+  return state.interviews[date];
+}
+
+function answerInterview(date, text) {
+  const iv = interviewFor(date);
+  const a = text.trim();
+  if (!a) return false;
+  state.journal.push({ date, day: dayNumber(date), q: iv.q, a, outlet: iv.outlet, milestone: iv.milestone, kind: "interview" });
+  iv.status = "answered";
+  const who = state.profile.name ? `President ${state.profile.name}` : "The Sonics president";
+  state.news.push({ date, type: "PRESSER", text: `${who} met with the ${iv.outlet}: "${a.length > 90 ? a.slice(0, 90) + "…" : a}"` });
+  save();
+  return true;
+}
+
+function interviewCard(task) {
+  if (task.locked) return taskRow("🔒", `Media interview · ${fmtTime(task.time)}`, "locked");
+  const iv = interviewFor(today());
+  if (task.done) return taskRow(iv.status === "answered" ? "✅" : "➖", `Media interview${iv.status === "answered" ? "" : ": skipped"}`);
+  return `<div class="card task"><h2>🎤 Media interview</h2>
+    <p class="muted" style="margin-top:0">${esc(iv.outlet)} asks:</p>
+    <p class="quote">"${esc(iv.q)}"</p>
+    <textarea id="ivText" class="answer" placeholder="Type your answer, or tap the 🎤 on your keyboard to talk."></textarea>
+    <div class="row" style="margin-top:8px">
+      <button class="ghost yes" id="ivSend">Answer</button>
+      <button class="ghost" id="ivSkip">No comment today</button>
+    </div></div>`;
+}
+
+function renderJournal() {
+  const entries = state.journal.slice().reverse();
+  main.innerHTML = `
+    <div class="card"><h2>New note</h2>
+      <textarea id="noteText" class="answer" placeholder="Anything on your mind. Type, or tap the 🎤 on your keyboard to talk."></textarea>
+      <button class="ghost" id="noteSave" style="margin-top:8px">Save note</button>
+    </div>
+    <div class="card"><h2>Your journal (${entries.length})</h2>
+      <p class="muted" style="margin-top:0">Only on this phone. Nobody else can see it.</p>
+      ${entries.length ? entries.map((j) => `<div class="entry">
+        <div class="muted">Day ${j.day} · ${prettyDate(j.date)}${j.kind === "interview" ? ` · ${esc(j.outlet)}` : " · Note"}</div>
+        ${j.q ? `<p class="quote">"${esc(j.q)}"</p>` : ""}
+        <p class="ans">${esc(j.a)}</p>
+        <button class="linkbtn" data-del="${state.journal.indexOf(j)}">Delete</button>
+      </div>`).join("") : `<p class="muted">Your interview answers and notes will show up here.</p>`}
+    </div>`;
+  document.getElementById("noteSave").onclick = () => {
+    const a = document.getElementById("noteText").value.trim();
+    if (!a) return;
+    state.journal.push({ date: today(), day: dayNumber(today()), q: null, a, kind: "note" });
+    save(); render();
+  };
+  document.querySelectorAll("[data-del]").forEach(b => b.onclick = () => {
+    if (!confirm("Delete this entry? This can't be undone.")) return;
+    state.journal.splice(+b.dataset.del, 1); save(); render();
+  });
 }
 
 function taskRow(icon, text, cls = "") { return `<div class="task-row ${cls}">${icon} ${text}</div>`; }
@@ -662,6 +815,7 @@ function taskCard(task) {
     return `<div class="card task"><h2>☀️ Morning report</h2>${reportBody()}
       <button class="ghost" id="reportBtn">Got it</button></div>`;
   }
+  if (task.kind === "interview") return interviewCard(task);
   if (task.kind === "goal") {
     const g = task.goal;
     if (task.locked) return taskRow("🔒", `${esc(g.label)} · ${fmtTime(task.time)}`, "locked");
@@ -718,6 +872,8 @@ function renderToday() {
     const t = today();
     state.goalLog[t] = { ...(state.goalLog[t] || {}), [id]: val }; save(); render();
   };
+  on("#ivSend", () => { if (answerInterview(today(), document.getElementById("ivText").value)) render(); });
+  on("#ivSkip", () => { interviewFor(today()).status = "skipped"; save(); render(); });
   on("[data-goal-yes]", el => answerGoal(el.dataset.goalYes, true));
   on("[data-goal-no]", el => answerGoal(el.dataset.goalNo, false));
   on("[data-clean]", el => tipOff(true, el.dataset.clean));
@@ -864,7 +1020,7 @@ function removePasscode() {
 function planSummary() {
   const p = state.profile, f = FOCUS[p.main];
   const lines = [`Main battle: <b>${esc(f.label)}</b> · check-in ${fmtTime(p.times.main)}`,
-    `Morning report: ${fmtTime(p.times.morning)}`]
+    `Morning report: ${fmtTime(p.times.morning)}`, `Media interview: ${fmtTime(p.times.interview)}`]
     .concat(p.goals.map(g => `Goal: <b>${esc(g.label)}</b> · ${fmtTime(g.time)}`));
   if (hasMoney()) lines.push(`Savings: about ${money(costPerDay())} a day`);
   lines.push(`Day 1: ${prettyDate(state.habit.quitDate)}`);
@@ -985,7 +1141,7 @@ document.addEventListener("visibilitychange", () => {
 
 // For testing only.
 window.__sonics = { get state() { return state; }, teamRating, playerRating, checkIn, render, newState, daysFree, costPerDay,
-  tasksFor, openTaskCount, startWizard, get locked() { return locked; },
+  tasksFor, openTaskCount, startWizard, makeQuestion, get locked() { return locked; },
   reset() { state = null; try { localStorage.removeItem(KEY); } catch (e) {} } };
 </script>
 </body>
