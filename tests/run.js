@@ -426,6 +426,33 @@ function check(name, ok, detail = "") {
   check("5 slips extends the 2 biggest expiring contracts", ext.phase === "offseason" && ext.n === 15 &&
     ext.kept.includes("Gabe Vincent:1") && ext.kept.includes("Cam Thomas:1"), JSON.stringify(ext));
 
+  // Moving Day 1 later erases the earlier days (and their slip) as if they never happened.
+  await fresh();
+  await setDay(0);
+  await signUp({ quit: "2026-10-21" });
+  page.once("dialog", d => d.accept());
+  await page.click("[data-slip]");
+  await page.waitForSelector(".final");
+  let before = await S();
+  check("setup: day 1 slip recorded", before.log.length === 1 && !before.log[0].clean && before.econ.morale < 50);
+  await setDay(1, 12);
+  await page.click("nav button[data-tab=more]");
+  await page.click("#editPlan");
+  await page.click("#wNext");
+  await page.click("#wNext");
+  await page.fill("#wQuit", "2026-10-22");
+  page.once("dialog", d => d.accept());
+  await page.click("#wDone");
+  let after = await S();
+  check("moving Day 1 erases the slip day", after.log.length === 0 && after.habit.quitDate === "2026-10-22");
+  check("its morale loss is undone", after.econ.morale === 50 && after.econ.ledger.length === 0, String(after.econ.morale));
+  check("record back to 0-0, next game is game 1", (await page.textContent("#hdrRec")) === "0–0" &&
+    !after.news.some(n => n.type === "LOSS" || n.type === "WIN"));
+  check("free slips back to 3", await page.evaluate(() => window.__sonics.state.log.filter(e => !e.clean).length) === 0);
+  await setDay(1, 21);
+  await page.evaluate(() => window.__sonics.checkIn(true));
+  check("game 1 plays again on the new Day 1", (await S()).log[0].game.no === 1);
+
   // Other main battles.
   await fresh();
   await setDay(0);

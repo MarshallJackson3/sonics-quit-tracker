@@ -705,6 +705,9 @@ function renderWizard() {
     const profile = { name: wiz.name, main: wiz.main, goals: wiz.goals, times: wiz.times };
     const habit = FOCUS[wiz.main].money ? wiz.habit : { kind: null, quitDate: wiz.habit.quitDate };
     if (wiz.edit) {
+      const dropped = state.log.filter(e => e.date < habit.quitDate);
+      if (dropped.length && !confirm(`Move Day 1 to ${prettyDate(habit.quitDate)}? This erases ${dropped.length} day${dropped.length === 1 ? "" : "s"} before it (games, slips, and what they earned or cost). Your journal stays.`)) return;
+      if (dropped.length) eraseDaysBefore(habit.quitDate);
       state.profile = { ...profile, name: state.profile.name };
       state.habit = habit;
     } else {
@@ -713,6 +716,28 @@ function renderWizard() {
     save(); wiz = null; finishWizard(); syncNotifications();
   };
 }
+// Moving Day 1 later: remove every day before it as if it never happened.
+function eraseDaysBefore(date) {
+  const gone = state.log.filter(e => e.date < date);
+  if (!gone.length) return;
+  const e = state.econ;
+  // Undo what those days earned or cost (newest first), then forget them.
+  e.ledger.filter(l => l.date < date).reverse().forEach(l => {
+    e.cap -= l.cap || 0; e.revenue -= l.revenue || 0;
+    e.morale = Math.max(0, Math.min(100, e.morale - (l.morale || 0)));
+  });
+  e.ledger = e.ledger.filter(l => l.date >= date);
+  e.pending = e.pending.filter(p => p.date >= date);
+  state.log = state.log.filter(x => x.date >= date);
+  state.news = state.news.filter(n => !(n.date < date && ["WIN", "LOSS", "SEASON"].includes(n.type)));
+  state.newsSeen = Math.min(state.newsSeen, state.news.length);
+  Object.keys(state.goalLog).forEach(d => { if (d < date) delete state.goalLog[d]; });
+  Object.keys(state.reportsRead).forEach(d => { if (d < date) delete state.reportsRead[d]; });
+  Object.keys(state.lineupSet || {}).forEach(d => { if (d < date) delete state.lineupSet[d]; });
+  // Game numbers come from the log, so the season picks up again at the right game.
+  gone.forEach(x => { if (x.game) state.news.push({ date: today(), type: "NOTE", text: `Day 1 moved to ${prettyDate(date)}: ${prettyDate(x.date)} (game ${x.game.no}) was erased.` }); });
+}
+
 function finishWizard() {
   document.getElementById("nav").classList.remove("hidden");
   tab = "today"; render();
@@ -1875,7 +1900,7 @@ document.addEventListener("visibilitychange", () => {
 window.__sonics = { get state() { return state; }, teamRating, playerRating, checkIn, render, newState, daysFree, costPerDay,
   tasksFor, openTaskCount, startWizard, makeQuestion, upgradeStadium, award, playGame,
   capRoom, payroll, deadMoney, appeal, priceFor, signFA, availableFAs, interested, dailyForm, lineupRating, starterNames,
-  coachBonus, makeTrade, breakingNews, formAdj, alertSchedule, get locked() { return locked; },
+  coachBonus, makeTrade, breakingNews, formAdj, alertSchedule, eraseDaysBefore, get locked() { return locked; },
   reset() { state = null; try { localStorage.removeItem(KEY); } catch (e) {} } };
 </script>
 </body>
