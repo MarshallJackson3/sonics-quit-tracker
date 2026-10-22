@@ -84,6 +84,17 @@ nav button .i { display: block; font-size: 20px; }
 .suspense { text-align: center; padding: 30px 0; font-weight: 700; color: var(--gold); }
 textarea { width: 100%; min-height: 90px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 8px; font: 12px monospace; }
 .hidden { display: none; }
+.picks { display: flex; flex-wrap: wrap; gap: 8px; }
+.pick { padding: 10px 14px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); }
+.pick.on { background: var(--gold); color: #1b1300; border-color: var(--gold); font-weight: 700; }
+.pick:disabled { opacity: .4; }
+.goalbox { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.story p { margin: 0 0 10px; }
+.task { border-color: var(--gold); }
+.task .yes { background: var(--gold); color: #1b1300; border-color: var(--gold); font-weight: 700; }
+.task-row { padding: 12px 14px; margin-bottom: 10px; border-radius: var(--radius); background: var(--panel); border: 1px solid var(--line); font-size: 15px; }
+.task-row.locked { color: var(--muted); border-style: dashed; }
+.tasks-head { margin: 4px 2px 8px; }
 .money { font-size: 40px; font-weight: 800; text-align: center; color: var(--win); margin: 2px 0 12px; font-variant-numeric: tabular-nums; }
 .crave { width: 100%; padding: 14px; margin-bottom: 14px; background: var(--panel-2); color: var(--text); border: 1px solid var(--gold); font-weight: 700; }
 .form label { display: block; margin-bottom: 10px; font-size: 14px; color: var(--muted); }
@@ -99,7 +110,7 @@ a { color: var(--gold); overflow-wrap: anywhere; }
 </header>
 <main id="main"></main>
 <nav id="nav">
-  <button data-tab="today"><span class="i">🏀</span>Today</button>
+  <button data-tab="today"><span class="i">🏀</span>Today<span id="todayBadge"></span></button>
   <button data-tab="games"><span class="i">📅</span>Games</button>
   <button data-tab="roster"><span class="i">👥</span>Roster</button>
   <button data-tab="news"><span class="i">📰</span>News<span id="newsBadge"></span></button>
@@ -113,13 +124,41 @@ const KEY = "sonics.v1";
 const SEASON_GAMES = 82;
 const HOME_ARENA = "Climate Pledge Arena";
 const ROTATION_MINUTES = [34, 32, 30, 30, 28, 24, 22, 20, 20];
+// What a person can focus on. "quit" = something to stop, "build" = something to do more of.
+// goalOnly items can be extra goals but not someone's main battle. money = has a savings counter.
+const FOCUS = {
+  nicotine: { label: "Nicotine", type: "quit", money: true, free: "Nicotine-free", q: "Did you stay nicotine-free today?" },
+  weed: { label: "Weed", type: "quit", money: true, free: "Weed-free", q: "Did you stay weed-free today?" },
+  drinking: { label: "Drinking", type: "quit", money: true, free: "Alcohol-free", q: "Did you stay alcohol-free today?" },
+  porn: { label: "Porn", type: "quit", free: "Porn-free", q: "Did you stay porn-free today?" },
+  masturbation: { label: "Masturbation", type: "quit", free: "Clean", q: "Did you avoid masturbating today?" },
+  gaming: { label: "Video games", type: "quit", free: "Game-free", q: "Did you stay off video games today?" },
+  procrastination: { label: "Laziness / procrastination", type: "quit", free: "On task", q: "Did you get done what you'd been putting off today?" },
+  workout: { label: "Working out", type: "build", q: "Did you work out today?" },
+  relationships: { label: "Relationships", type: "build", goalOnly: true, q: "Did you put time into a relationship today (a call, a plan, quality time)?" },
+  skill: { label: "New skill", type: "build", goalOnly: true, q: "Did you work on your new skill today?" },
+  reading: { label: "Reading", type: "build", goalOnly: true, q: "Did you read today?" },
+  meditating: { label: "Meditating", type: "build", goalOnly: true, q: "Did you meditate today?" },
+  screenfree: { label: "Screen-free time", type: "build", goalOnly: true, q: "Did you take some screen-free time today?" },
+};
+const MAX_GOALS = 2;
+// Ways to use something that costs money. Nicotine has several; weed and drinking have one each.
 const HABITS = {
-  pouches: { label: "Nicotine pouches", unit: "pouch", units: "pouches", pack: "tin" },
-  vape: { label: "Vape", unit: "pod", units: "pods", pack: "pack" },
-  cigarettes: { label: "Cigarettes", unit: "cigarette", units: "cigarettes", pack: "pack" },
-  dip: { label: "Dip / chew", unit: "can", units: "cans", pack: "can" },
+  pouches: { focus: "nicotine", label: "Nicotine pouches", unit: "pouch", units: "pouches", pack: "tin" },
+  vape: { focus: "nicotine", label: "Vape", unit: "pod", units: "pods", pack: "pack" },
+  cigarettes: { focus: "nicotine", label: "Cigarettes", unit: "cigarette", units: "cigarettes", pack: "pack" },
+  dip: { focus: "nicotine", label: "Dip / chew", unit: "can", units: "cans", pack: "can" },
+  weed: { focus: "weed", label: "Weed", unit: "bowl", units: "bowls", single: true },
+  drinks: { focus: "drinking", label: "Drinks", unit: "drink", units: "drinks", single: true },
 };
 const DEFAULT_HABIT = { kind: "pouches", perDay: 12, perPack: 15, packPrice: 5.33 };
+const DEFAULT_HABITS = {
+  nicotine: DEFAULT_HABIT,
+  weed: { kind: "weed", perDay: 2, perPack: 1, packPrice: 5 },
+  drinking: { kind: "drinks", perDay: 3, perPack: 1, packPrice: 6 },
+};
+const DEFAULT_TIMES = { morning: "07:00", main: "20:00" };
+const GOAL_TIMES = ["10:00", "16:00"];
 const CRAVING_SECONDS = 5 * 60;
 
 // ---------- helpers ----------
@@ -167,6 +206,7 @@ function teamRating(roster) {
   return 0.75 * rotation(roster).reduce((sum, p, i) => sum + playerRating(p) * ROTATION_MINUTES[i], 0) / 48;
 }
 
+
 // ---------- state ----------
 function load() {
   try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && s.version === 1) return migrate(s); } catch (e) {}
@@ -176,11 +216,17 @@ function load() {
 function migrate(s) {
   if (!s.habit) s.habit = { ...DEFAULT_HABIT, quitDate: s.startDate };
   if (!s.cravings) s.cravings = [];
+  if (!s.profile) {
+    // Saves from before goals existed were all nicotine. Ask them to pick goals.
+    s.profile = { name: "", main: "nicotine", goals: [], times: { ...DEFAULT_TIMES }, needsGoals: true };
+  }
+  if (!s.goalLog) s.goalLog = {};
+  if (!s.reportsRead) s.reportsRead = {};
   return s;
 }
 function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
 
-function newState(habit) {
+function newState(profile, habit) {
   const start = today();
   const seed = Math.floor(Math.random() * 2 ** 31);
   const s = {
@@ -191,12 +237,16 @@ function newState(habit) {
     seasons: [],    // finished seasons: {season, w, l}
     news: [],
     newsSeen: 0,
+    profile: profile || { name: "", main: "nicotine", goals: [], times: { ...DEFAULT_TIMES } },
     habit: habit || { ...DEFAULT_HABIT, quitDate: start },
     cravings: [],   // {at, beaten}
+    goalLog: {},    // {date: {goalId: true/false}}
+    reportsRead: {},// {date: true}
   };
   s.schedule = makeSchedule(seed, 1);
   const n = (type, text) => s.news.push({ date: start, type, text });
   n("FRANCHISE", "The Seattle SuperSonics are back (in this what-if world). Expectations: very, very low.");
+  n("HIRED", `Sonics name ${s.profile.name || "a mystery hire"} President of Basketball Operations. The new boss's first battle: ${FOCUS[s.profile.main].label.toLowerCase()}.`);
   n("HIRED", `Sonics name ${s.gm.name} general manager. ${s.gm.fact}`);
   n("HIRED", `Sonics name ${s.coach.name} head coach. Career record: ${s.coach.record}.`);
   n("SIGNED", `Sonics sign 18 free agents nobody else wanted, led by ${s.roster[0].name} (worst VORP among available players last season).`);
@@ -235,7 +285,9 @@ function streak() {
   return n;
 }
 // ---------- savings ----------
-function costPerDay(h = state.habit) { return h.perDay / h.perPack * h.packPrice; }
+function mainFocus() { return FOCUS[state.profile.main]; }
+function hasMoney() { return !!mainFocus().money && !!state.habit.kind; }
+function costPerDay(h = state.habit) { return h.kind ? h.perDay / h.perPack * h.packPrice : 0; }
 function quitStart() { const [y, m, d] = state.habit.quitDate.split("-").map(Number); return new Date(y, m - 1, d); }
 function nowDate() { return window.__fakeNow ? window.__fakeNow() : new Date(); }
 function hasStarted() { return today() >= state.habit.quitDate; }
@@ -254,9 +306,46 @@ function sinceLastUse() {
   const d = Math.floor(ms / 86400000), h = Math.floor(ms / 3600000) % 24, m = Math.floor(ms / 60000) % 60;
   return `${d}d ${h}h ${m}m`;
 }
+function dayNumber(date = today()) {
+  const [y, m, d] = date.split("-").map(Number);
+  return Math.round((new Date(y, m - 1, d) - quitStart()) / 86400000) + 1;
+}
 
-function todaysEntry() { return state.log.find(e => e.date === today()); }
+function entryFor(date) { return state.log.find(e => e.date === date); }
+function todaysEntry() { return entryFor(today()); }
 function teamByAbbr(a) { return DATA.teams.find(t => t.abbr === a); }
+
+// ---------- daily tasks ----------
+function fmtTime(hhmm) {
+  const [h, m] = hhmm.split(":").map(Number);
+  return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
+}
+function minutesNow() { const d = nowDate(); return d.getHours() * 60 + d.getMinutes(); }
+function minutesOf(hhmm) { const [h, m] = hhmm.split(":").map(Number); return h * 60 + m; }
+
+// Today's tasks in time order. Each: {id, kind, time, open (unlocked and not done), done, locked, ...}.
+function tasksFor() {
+  if (!hasStarted()) return [];
+  const t = today(), y = addDays(t, -1), now = minutesNow(), p = state.profile;
+  const tasks = [];
+  const add = (task) => {
+    task.locked = !task.done && task.time && now < minutesOf(task.time);
+    task.open = !task.done && !task.locked;
+    tasks.push(task);
+  };
+  // Forgot last night's check-in? It stays open until today's is done.
+  if (y >= state.habit.quitDate && !entryFor(y) && !todaysEntry()) {
+    add({ id: "catchup", kind: "main", date: y, time: null, done: false });
+  }
+  add({ id: "report", kind: "report", time: p.times.morning, done: !!state.reportsRead[t] });
+  p.goals.forEach(g => {
+    const ans = (state.goalLog[t] || {})[g.id];
+    add({ id: "goal-" + g.id, kind: "goal", goal: g, time: g.time, done: ans !== undefined, answer: ans });
+  });
+  add({ id: "main", kind: "main", date: t, time: p.times.main, done: !!todaysEntry() });
+  return tasks.sort((a, b) => (a.time === null ? -1 : b.time === null ? 1 : minutesOf(a.time) - minutesOf(b.time)));
+}
+function openTaskCount() { return tasksFor().filter(t => t.open).length; }
 
 // ---------- playing a game ----------
 function playGame(clean) {
@@ -285,14 +374,16 @@ function playGame(clean) {
   };
 }
 
-function checkIn(clean) {
-  if (todaysEntry() || !hasStarted()) return;
+// Log a day (today, or yesterday if it was missed) and play that day's game.
+function checkIn(clean, date = today()) {
+  if (entryFor(date) || date < state.habit.quitDate || date > today()) return;
   const game = playGame(clean);
-  state.log.push({ date: today(), clean, game });
+  state.log.push({ date, clean, game });
+  state.log.sort((a, b) => a.date < b.date ? -1 : 1);
   const where = game.home ? `at ${HOME_ARENA}` : `in ${game.oppName.split(" ").slice(0, -1).join(" ")}`;
   const verb = game.result === "W" ? "beat" : "fall to";
   state.news.push({
-    date: today(), type: game.result === "W" ? "WIN" : "LOSS",
+    date, type: game.result === "W" ? "WIN" : "LOSS",
     text: `Game ${game.no}: Sonics ${verb} the ${game.oppName} ${game.my}–${game.them} ${where}. ${game.top.name} led Seattle with ${game.top.pts}.`
       + (game.slip ? " (Slip day. Tomorrow is a new game.)" : ""),
   });
@@ -315,69 +406,185 @@ const main = document.getElementById("main");
 
 function render() {
   if (!state) { renderWelcome(); return; }
+  if (wiz) { renderWizard(); return; }
   const r = record(seasonGames());
   document.getElementById("hdrRec").textContent = `${r.w}–${r.l}`;
   document.getElementById("hdrSub").textContent =
     `Season ${state.season} · Coach ${state.coach.name} · GM ${state.gm.name}`;
   const unseen = state.news.length - state.newsSeen;
   document.getElementById("newsBadge").innerHTML = unseen > 0 && tab !== "news" ? `<span class="badge">${unseen}</span>` : "";
+  const open = openTaskCount();
+  document.getElementById("todayBadge").innerHTML = open > 0 ? `<span class="badge">${open}</span>` : "";
   document.querySelectorAll("nav button").forEach(b => b.classList.toggle("on", b.dataset.tab === tab));
   ({ today: renderToday, games: renderGames, roster: renderRoster, news: renderNews, more: renderMore })[tab]();
   window.scrollTo(0, 0);
 }
 
-function habitForm(h) {
-  const opts = Object.entries(HABITS).map(([k, v]) => `<option value="${k}" ${k === h.kind ? "selected" : ""}>${v.label}</option>`).join("");
+// ---------- sign-up story and plan picker ----------
+// Steps: 0 story, 1 main battle, 2 goals, 3 details. Editing an existing plan starts at step 1 (or 2).
+let wiz = null;
+
+function startWizard(edit, step = edit ? 1 : 0) {
+  const p = edit ? state.profile : null;
+  wiz = {
+    step, edit,
+    name: p ? p.name : "",
+    main: p ? p.main : "nicotine",
+    goals: p ? p.goals.map(g => ({ ...g })) : [],
+    habit: edit ? { ...state.habit } : { ...DEFAULT_HABIT, quitDate: today() },
+    times: p ? { ...p.times } : { ...DEFAULT_TIMES },
+  };
+  renderWizard();
+}
+
+function habitForm(h, focus) {
+  const kinds = Object.entries(HABITS).filter(([, v]) => v.focus === focus);
+  if (!kinds.some(([k]) => k === h.kind)) h = { ...DEFAULT_HABITS[focus], quitDate: h.quitDate };
+  const opts = kinds.map(([k, v]) => `<option value="${k}" ${k === h.kind ? "selected" : ""}>${v.label}</option>`).join("");
   return `<div class="form">
-    <label>What do you use?<select id="hKind">${opts}</select></label>
+    <label class="${kinds.length > 1 ? "" : "hidden"}">What do you use?<select id="hKind">${opts}</select></label>
     <label><span id="hPerDayLbl"></span><input id="hPerDay" type="number" inputmode="decimal" min="0" step="any" value="${h.perDay}"></label>
-    <label><span id="hPerPackLbl"></span><input id="hPerPack" type="number" inputmode="decimal" min="1" step="any" value="${h.perPack}"></label>
+    <label id="hPerPackWrap"><span id="hPerPackLbl"></span><input id="hPerPack" type="number" inputmode="decimal" min="1" step="any" value="${h.perPack}"></label>
     <label><span id="hPriceLbl"></span><input id="hPrice" type="number" inputmode="decimal" min="0" step="0.01" value="${h.packPrice}"></label>
-    <label>Quit date (day 1)<input id="hQuit" type="date" value="${h.quitDate}"></label>
     <p class="muted" id="hCost"></p>
   </div>`;
 }
 function readHabitForm() {
   const num = (id, min) => Math.max(min, parseFloat(document.getElementById(id).value) || 0);
+  const kind = document.getElementById("hKind").value;
   return {
-    kind: document.getElementById("hKind").value,
-    perDay: num("hPerDay", 0), perPack: num("hPerPack", 1), packPrice: num("hPrice", 0),
-    quitDate: document.getElementById("hQuit").value || today(),
+    kind, perDay: num("hPerDay", 0),
+    perPack: HABITS[kind].single ? 1 : num("hPerPack", 1), packPrice: num("hPrice", 0),
   };
 }
 function wireHabitForm() {
+  const cap = s => s[0].toUpperCase() + s.slice(1);
   const update = () => {
     const h = readHabitForm(), v = HABITS[h.kind];
-    document.getElementById("hPerDayLbl").textContent = `${v.units[0].toUpperCase() + v.units.slice(1)} per day`;
-    document.getElementById("hPerPackLbl").textContent = h.kind === "dip" ? "Cans per purchase" : `${v.units[0].toUpperCase() + v.units.slice(1)} per ${v.pack}`;
-    document.getElementById("hPriceLbl").textContent = h.kind === "dip" ? "Price per purchase ($)" : `Price per ${v.pack} ($)`;
+    document.getElementById("hPerDayLbl").textContent = `${cap(v.units)} per day`;
+    document.getElementById("hPerPackWrap").classList.toggle("hidden", !!v.single);
+    document.getElementById("hPerPackLbl").textContent = h.kind === "dip" ? "Cans per purchase" : `${cap(v.units)} per ${v.pack}`;
+    document.getElementById("hPriceLbl").textContent = v.single ? `About how much per ${v.unit} ($)`
+      : h.kind === "dip" ? "Price per purchase ($)" : `Price per ${v.pack} ($)`;
     document.getElementById("hCost").textContent = `That's about ${money(costPerDay(h))} a day, ${money(costPerDay(h) * 365)} a year.`;
   };
   document.querySelectorAll(".form input, .form select").forEach(el => el.oninput = update);
   update();
 }
 
-function renderWelcome() {
+// Save what's typed on the current step into wiz before moving on.
+function readWizardStep() {
+  const v = id => (document.getElementById(id) || {}).value;
+  if (wiz.step === 0) wiz.name = (v("wName") || "").trim().slice(0, 40);
+  if (wiz.step === 2) {
+    wiz.goals.forEach(g => {
+      if (v("gq-" + g.id) !== undefined) g.question = v("gq-" + g.id).trim() || FOCUS[g.id].q;
+      if (v("gl-" + g.id) !== undefined) g.label = v("gl-" + g.id).trim() || FOCUS[g.id].label;
+    });
+  }
+  if (wiz.step === 3) {
+    if (FOCUS[wiz.main].money) wiz.habit = { ...wiz.habit, ...readHabitForm() };
+    wiz.habit.quitDate = v("wQuit") || today();
+    wiz.times.morning = v("wMorning") || DEFAULT_TIMES.morning;
+    wiz.times.main = v("wMain") || DEFAULT_TIMES.main;
+    wiz.goals.forEach(g => { g.time = v("gt-" + g.id) || g.time; });
+  }
+}
+
+function renderWizard() {
   document.getElementById("nav").classList.add("hidden");
-  main.innerHTML = `
-    <div class="card">
-      <h2>Welcome to Seattle</h2>
-      <p>You now run the (what-if) Seattle SuperSonics. The roster is 18 real free agents that no NBA team signed. They are very bad.</p>
-      <p>Every day you stay nicotine-free, check in and the Sonics play a game. As your clean days stack up, the front office will make moves. You won't know what's coming until it happens.</p>
-      <p class="muted">Players, stats, coaches and GMs are real as of ${esc(DATA.day1.snapshotDate)}. The games are simulated. Seattle doesn't have an NBA team yet.</p>
-    </div>
-    <div class="card"><h2>About your habit</h2>
-      <p class="muted" style="margin-top:0">This sets up your savings counter. You can change it later under More.</p>
-      ${habitForm({ ...DEFAULT_HABIT, quitDate: today() })}
-      <button class="big" id="startBtn" style="margin-top:14px">Start my journey</button>
+  const back = (wiz.step > (wiz.edit ? 1 : 0)) || wiz.edit
+    ? `<button class="slip" id="wBack">${wiz.step > 1 || !wiz.edit ? "Back" : "Cancel"}</button>` : "";
+  let body = "";
+  if (wiz.step === 0) {
+    body = `<div class="card story">
+      <h2>6:02 AM. Your phone is ringing.</h2>
+      <p>It's Seattle's new ownership group. The SuperSonics are back (in this what-if world), and they want <b>you</b> to run basketball operations.</p>
+      <p>The bad news: the roster is 18 free agents nobody else wanted. The head coach is ${esc(DATA.day1.coach.name)}, career record ${esc(DATA.day1.coach.record.split(" ")[0])}. The GM is ${esc(DATA.day1.gm.name)}.</p>
+      <p>The good news: this franchise grows every day you win your own battle. Every check-in plays a game. Show up for your daily tasks and the team gets better around you.</p>
+      <p class="muted">Players, coaches and GMs are real as of ${esc(DATA.day1.snapshotDate)}. The games are simulated. Seattle doesn't have an NBA team yet.</p>
+      <div class="form"><label>What should the media call you?
+        <input id="wName" maxlength="40" placeholder="Your first name or a nickname" value="${esc(wiz.name)}"></label></div>
+      <button class="big" id="wNext">Take the job</button>
     </div>`;
-  wireHabitForm();
-  document.getElementById("startBtn").onclick = () => {
-    state = newState(readHabitForm()); save();
-    document.getElementById("nav").classList.remove("hidden");
-    tab = "today"; render();
+  } else if (wiz.step === 1) {
+    const opts = Object.entries(FOCUS).filter(([, f]) => !f.goalOnly).map(([k, f]) =>
+      `<button class="pick ${wiz.main === k ? "on" : ""}" data-main="${k}">${esc(f.label)}</button>`).join("");
+    body = `<div class="card"><h2>Your main battle</h2>
+      <p class="muted" style="margin-top:0">This is the one the Sonics play for every night.</p>
+      <div class="picks">${opts}</div>
+      <button class="big" id="wNext" style="margin-top:14px">Next</button>${back}</div>`;
+  } else if (wiz.step === 2) {
+    const chosen = id => wiz.goals.some(g => g.id === id);
+    const opts = Object.entries(FOCUS).filter(([k]) => k !== wiz.main).map(([k, f]) =>
+      `<button class="pick ${chosen(k) ? "on" : ""}" data-goal="${k}" ${!chosen(k) && wiz.goals.length >= MAX_GOALS ? "disabled" : ""}>${esc(f.label)}</button>`).join("");
+    const details = wiz.goals.map(g => `<div class="form goalbox">
+      ${g.id === "skill" ? `<label>What skill?<input id="gl-${g.id}" maxlength="40" placeholder="e.g. Real estate exam" value="${g.label === FOCUS.skill.label ? "" : esc(g.label)}"></label>` : `<b>${esc(g.label)}</b>`}
+      <label>The question we'll ask you<input id="gq-${g.id}" maxlength="120" value="${esc(g.question)}"></label>
+    </div>`).join("");
+    body = `<div class="card"><h2>Daily goals (up to ${MAX_GOALS})</h2>
+      <p class="muted" style="margin-top:0">Each goal adds a daily task. Showing up for them builds team morale. You can skip this.</p>
+      <div class="picks">${opts}</div>${details}
+      <button class="big" id="wNext" style="margin-top:14px">Next</button>${back}</div>`;
+  } else {
+    const f = FOCUS[wiz.main];
+    body = `<div class="card"><h2>Last details</h2>
+      ${f.money ? `<p class="muted" style="margin-top:0">This sets up your savings counter.</p>${habitForm(wiz.habit, wiz.main)}` : ""}
+      <div class="form">
+        <label>Day 1 (your start date)<input id="wQuit" type="date" value="${wiz.habit.quitDate}"></label>
+        <p class="muted" style="margin:14px 0 6px">When should each daily task show up?</p>
+        <label>☀️ Morning report<input id="wMorning" type="time" value="${wiz.times.morning}"></label>
+        ${wiz.goals.map(g => `<label>🎯 ${esc(g.label)}<input id="gt-${g.id}" type="time" value="${g.time}"></label>`).join("")}
+        <label>🏀 Nightly check-in (${esc(f.label.toLowerCase())}) and game<input id="wMain" type="time" value="${wiz.times.main}"></label>
+      </div>
+      <button class="big" id="wDone" style="margin-top:6px">${wiz.edit ? "Save my plan" : "Start my journey"}</button>${back}</div>`;
+  }
+  main.innerHTML = body;
+  window.scrollTo(0, 0);
+  if (wiz.step === 3 && FOCUS[wiz.main].money) wireHabitForm();
+
+  document.querySelectorAll("[data-main]").forEach(b => b.onclick = () => {
+    wiz.main = b.dataset.main;
+    wiz.goals = wiz.goals.filter(g => g.id !== wiz.main);
+    renderWizard();
+  });
+  document.querySelectorAll("[data-goal]").forEach(b => b.onclick = () => {
+    readWizardStep();
+    const id = b.dataset.goal;
+    if (wiz.goals.some(g => g.id === id)) wiz.goals = wiz.goals.filter(g => g.id !== id);
+    else if (wiz.goals.length < MAX_GOALS) {
+      const used = wiz.goals.map(g => g.time);
+      wiz.goals.push({ id, label: FOCUS[id].label, question: FOCUS[id].q, time: id === "workout" ? "10:00" : GOAL_TIMES.find(t => !used.includes(t)) || "16:00" });
+    }
+    renderWizard();
+  });
+  const next = document.getElementById("wNext");
+  if (next) next.onclick = () => { readWizardStep(); wiz.step++; renderWizard(); };
+  const backBtn = document.getElementById("wBack");
+  if (backBtn) backBtn.onclick = () => {
+    if (wiz.edit && wiz.step <= 1) { wiz = null; finishWizard(); return; }
+    readWizardStep(); wiz.step--; renderWizard();
+  };
+  const done = document.getElementById("wDone");
+  if (done) done.onclick = () => {
+    readWizardStep();
+    const profile = { name: wiz.name, main: wiz.main, goals: wiz.goals, times: wiz.times };
+    const habit = FOCUS[wiz.main].money ? wiz.habit : { kind: null, quitDate: wiz.habit.quitDate };
+    if (wiz.edit) {
+      state.profile = { ...profile, name: state.profile.name };
+      state.habit = habit;
+    } else {
+      state = newState(profile, habit);
+    }
+    save(); wiz = null; finishWizard();
   };
 }
+function finishWizard() {
+  document.getElementById("nav").classList.remove("hidden");
+  tab = "today"; render();
+}
+
+function renderWelcome() { startWizard(false); }
 
 function gameCard(g, animate) {
   const where = g.home ? `vs ${g.opp}` : `@ ${g.opp}`;
@@ -390,54 +597,137 @@ function gameCard(g, animate) {
   </div>`;
 }
 
-function renderToday() {
-  const entry = todaysEntry();
-  const nextNo = seasonGames().length + 1;
-  const next = state.schedule[nextNo - 1];
-  const v = HABITS[state.habit.kind];
-  const free = daysFree();
-  let html = `<div class="card"><h2>Your savings</h2>
-    <div class="money" id="moneySaved">${money(free * costPerDay())}</div>
-    <div class="stats">
-      <div><b id="unitsSaved">${Math.floor(free * state.habit.perDay)}</b><span>${v.units} not used</span></div>
-      <div><b id="streak">${streak()}</b><span>day streak</span></div>
-      <div><b>${state.cravings.filter(c => c.beaten).length}</b><span>cravings beaten</span></div>
-    </div>
-    <p class="muted" style="text-align:center;margin:10px 0 0">Nicotine-free for <b id="sinceUse">${sinceLastUse()}</b></p>
-  </div>
-  <button class="crave" id="craveBtn">😤 I'm having a craving</button>`;
-  if (!hasStarted()) {
-    html += `<div class="card"><h2>Day 1 is ${prettyDate(state.habit.quitDate)}</h2>
-      <p style="margin:0">Your first game tips off on your quit date. Check back then.</p></div>`;
-  } else if (entry) {
-    html += gameCard(entry.game, justPlayed);
-    html += `<p class="muted" style="text-align:center">Come back tomorrow for the next game.</p>`;
-  } else {
-    const opp = teamByAbbr(next.opp);
-    html += `<div class="card">
-      <h2>Tonight · Game ${nextNo} of ${SEASON_GAMES}</h2>
-      <p style="margin-top:0">${next.home ? "Home vs" : "Away @"} <b>${esc(opp.name)}</b>
-        <span class="muted">(${opp.w}–${opp.l} last season)</span></p>
-      <button class="big" id="cleanBtn">✅ I stayed nicotine-free today</button>
-      <button class="slip" id="slipBtn">I slipped today</button>
+function statusCard() {
+  const f = mainFocus();
+  const cravings = state.cravings.filter(c => c.beaten).length;
+  if (hasMoney()) {
+    const v = HABITS[state.habit.kind], free = daysFree();
+    return `<div class="card"><h2>Your savings</h2>
+      <div class="money" id="moneySaved">${money(free * costPerDay())}</div>
+      <div class="stats">
+        <div><b id="unitsSaved">${Math.floor(free * state.habit.perDay)}</b><span>${v.units} not used</span></div>
+        <div><b id="streak">${streak()}</b><span>day streak</span></div>
+        <div><b>${cravings}</b><span>cravings beaten</span></div>
+      </div>
+      <p class="muted" style="text-align:center;margin:10px 0 0">${esc(f.free)} for <b id="sinceUse">${sinceLastUse()}</b></p>
     </div>`;
   }
-  main.innerHTML = html;
-  document.getElementById("craveBtn").onclick = startCraving;
-  clearInterval(window.__tick);
-  if (hasStarted()) window.__tick = setInterval(() => {
-    if (tab !== "today" || !document.getElementById("moneySaved")) return clearInterval(window.__tick);
-    const f = daysFree();
-    document.getElementById("moneySaved").textContent = money(f * costPerDay());
-    document.getElementById("unitsSaved").textContent = Math.floor(f * state.habit.perDay);
-    document.getElementById("sinceUse").textContent = sinceLastUse();
-  }, 1000);
-  if (hasStarted() && !entry) {
-    document.getElementById("cleanBtn").onclick = () => tipOff(true);
-    document.getElementById("slipBtn").onclick = () => {
-      if (confirm("Log a slip for today? You'll keep your team, but the Sonics lose today's game.")) tipOff(false);
-    };
+  return `<div class="card"><h2>${f.type === "quit" ? esc(f.free) : esc(f.label)}</h2>
+    <div class="stats">
+      <div><b id="streak">${streak()}</b><span>day streak</span></div>
+      <div><b>${cleanDays()}</b><span>${f.type === "quit" ? "clean days" : "days done"}</span></div>
+      <div><b>${f.type === "quit" ? cravings : state.season}</b><span>${f.type === "quit" ? "cravings beaten" : "season"}</span></div>
+    </div>
+    ${f.type === "quit" ? `<p class="muted" style="text-align:center;margin:10px 0 0">${esc(f.free)} for <b id="sinceUse">${sinceLastUse()}</b></p>` : ""}
+  </div>`;
+}
+
+function reportBody() {
+  const t = today(), y = addDays(t, -1), n = dayNumber(t);
+  const next = state.schedule[seasonGames().length];
+  const opp = teamByAbbr(next.opp);
+  const lines = [];
+  if (n === 1) {
+    lines.push(`Day 1. The Sonics' first season starts tonight, and so does yours.`);
+  } else {
+    lines.push(`Day ${n}.`);
+    const ye = entryFor(y);
+    if (ye) lines.push(`Last night: ${ye.game.result === "W" ? "a win" : "a loss"}, ${ye.game.my}–${ye.game.them} ${ye.game.home ? "vs" : "@"} ${ye.game.opp}.`);
+    const gl = state.goalLog[y] || {};
+    const goals = state.profile.goals;
+    if (goals.length) lines.push(`Yesterday's goals: ${goals.filter(g => gl[g.id] === true).length} of ${goals.length} done.`);
   }
+  lines.push(`Tonight: ${next.home ? "home vs" : "away @"} the ${opp.name} (${opp.w}–${opp.l} last season).`);
+  return lines.map(l => `<p style="margin:0 0 6px">${esc(l)}</p>`).join("");
+}
+
+function taskRow(icon, text, cls = "") { return `<div class="task-row ${cls}">${icon} ${text}</div>`; }
+
+function taskCard(task) {
+  const f = mainFocus();
+  if (task.kind === "report") {
+    if (task.locked) return taskRow("🔒", `Morning report · ${fmtTime(task.time)}`, "locked");
+    if (task.done) return taskRow("✅", "Morning report");
+    return `<div class="card task"><h2>☀️ Morning report</h2>${reportBody()}
+      <button class="ghost" id="reportBtn">Got it</button></div>`;
+  }
+  if (task.kind === "goal") {
+    const g = task.goal;
+    if (task.locked) return taskRow("🔒", `${esc(g.label)} · ${fmtTime(task.time)}`, "locked");
+    if (task.done) return taskRow(task.answer ? "✅" : "➖", `${esc(g.label)}: ${task.answer ? "done" : "not today"}`);
+    return `<div class="card task"><h2>🎯 ${esc(g.label)}</h2>
+      <p style="margin-top:0">${esc(g.question)}</p>
+      <div class="row"><button class="ghost yes" data-goal-yes="${g.id}">Yes</button>
+      <button class="ghost" data-goal-no="${g.id}">Not today</button></div></div>`;
+  }
+  // The nightly check-in that plays the game.
+  const nextNo = seasonGames().length + 1;
+  const opp = teamByAbbr(state.schedule[nextNo - 1].opp);
+  const home = state.schedule[nextNo - 1].home;
+  if (task.id === "main" && task.done) return gameCard(todaysEntry().game, justPlayed);
+  if (task.locked) return taskRow("🔒", `Tonight ${home ? "vs" : "@"} ${esc(opp.name)} · check-in ${fmtTime(task.time)}`, "locked");
+  const catchup = task.id === "catchup";
+  const q = catchup ? f.q.replace("today", "yesterday") : f.q;
+  return `<div class="card task">
+    <h2>${catchup ? `Last night's check-in (${prettyDate(task.date)})` : `Tonight · Game ${nextNo} of ${SEASON_GAMES}`}</h2>
+    <p style="margin-top:0">${home ? "Home vs" : "Away @"} <b>${esc(opp.name)}</b> <span class="muted">(${opp.w}–${opp.l} last season)</span></p>
+    <p style="margin-top:0">${esc(q)}</p>
+    <button class="big" data-clean="${task.date}">✅ Yes</button>
+    <button class="slip" data-slip="${task.date}">${f.type === "quit" ? "No, I slipped" : "Not today"}</button>
+  </div>`;
+}
+
+let lastOpenCount = -1;
+function renderToday() {
+  let html = statusCard();
+  if (state.profile.needsGoals) {
+    html += `<div class="card"><h2>New: daily goals</h2>
+      <p style="margin-top:0">Pick up to two goals (working out, studying, reading...). Each one becomes a daily task.</p>
+      <button class="ghost" id="pickGoalsBtn">Pick my goals</button></div>`;
+  }
+  if (mainFocus().type === "quit") html += `<button class="crave" id="craveBtn">😤 I'm having a craving</button>`;
+  const tasks = tasksFor();
+  if (!hasStarted()) {
+    html += `<div class="card"><h2>Day 1 is ${prettyDate(state.habit.quitDate)}</h2>
+      <p style="margin:0">Your first tasks and your first game start on day 1. Check back then.</p></div>`;
+  } else {
+    const done = tasks.filter(t => t.done).length;
+    html += `<p class="muted tasks-head">Today's tasks · ${done} of ${tasks.length} done</p>`;
+    html += tasks.map(taskCard).join("");
+    if (done === tasks.length) html += `<p class="muted" style="text-align:center">All done for today. See you tomorrow.</p>`;
+  }
+  main.innerHTML = html;
+  lastOpenCount = openTaskCount();
+
+  const on = (sel, fn) => document.querySelectorAll(sel).forEach(el => el.onclick = () => fn(el));
+  on("#pickGoalsBtn", () => startWizard(true, 2));
+  on("#craveBtn", startCraving);
+  on("#reportBtn", () => { state.reportsRead[today()] = true; save(); render(); });
+  const answerGoal = (id, val) => {
+    const t = today();
+    state.goalLog[t] = { ...(state.goalLog[t] || {}), [id]: val }; save(); render();
+  };
+  on("[data-goal-yes]", el => answerGoal(el.dataset.goalYes, true));
+  on("[data-goal-no]", el => answerGoal(el.dataset.goalNo, false));
+  on("[data-clean]", el => tipOff(true, el.dataset.clean));
+  on("[data-slip]", el => {
+    if (confirm("Log it? You'll keep your team, but the Sonics lose that game.")) tipOff(false, el.dataset.slip);
+  });
+
+  // Keep the counters ticking, and refresh when a new task unlocks.
+  clearInterval(window.__tick);
+  window.__tick = setInterval(() => {
+    if (tab !== "today" || wiz || !document.querySelector(".tasks-head, #streak")) return clearInterval(window.__tick);
+    if (openTaskCount() !== lastOpenCount) return render();
+    const m = document.getElementById("moneySaved");
+    if (m) {
+      const fr = daysFree();
+      m.textContent = money(fr * costPerDay());
+      document.getElementById("unitsSaved").textContent = Math.floor(fr * state.habit.perDay);
+    }
+    const s = document.getElementById("sinceUse");
+    if (s) s.textContent = sinceLastUse();
+  }, 1000);
   justPlayed = false;
 }
 
@@ -471,9 +761,25 @@ function startCraving() {
   document.getElementById("backBtn").onclick = () => { clearInterval(t); render(); };
 }
 
-function tipOff(clean) {
+function tipOff(clean, date = today()) {
   main.innerHTML = `<div class="card suspense">🏀 Tip-off…</div>`;
-  setTimeout(() => { checkIn(clean); justPlayed = true; render(); }, window.__fast ? 0 : 1400);
+  setTimeout(() => {
+    checkIn(clean, date);
+    if (date === today()) { justPlayed = true; render(); return; }
+    // A catch-up game for yesterday: show its result, then go back to today.
+    main.innerHTML = gameCard(entryFor(date).game, true) + `<button class="big" id="contBtn">Continue</button>`;
+    document.getElementById("contBtn").onclick = () => render();
+  }, window.__fast ? 0 : 1400);
+}
+
+function planSummary() {
+  const p = state.profile, f = FOCUS[p.main];
+  const lines = [`Main battle: <b>${esc(f.label)}</b> · check-in ${fmtTime(p.times.main)}`,
+    `Morning report: ${fmtTime(p.times.morning)}`]
+    .concat(p.goals.map(g => `Goal: <b>${esc(g.label)}</b> · ${fmtTime(g.time)}`));
+  if (hasMoney()) lines.push(`Savings: about ${money(costPerDay())} a day`);
+  lines.push(`Day 1: ${prettyDate(state.habit.quitDate)}`);
+  return lines.map(l => `<p style="margin:0 0 6px">${l}</p>`).join("");
 }
 
 function renderGames() {
@@ -518,9 +824,9 @@ function renderMore() {
   main.innerHTML = `
     ${installed ? "" : `<div class="card"><h2>Put it on your iPhone</h2>
       <p style="margin:0">In Safari, tap the Share button (square with an arrow), then <b>Add to Home Screen</b>.</p></div>`}
-    <div class="card"><h2>Your habit</h2>
-      ${habitForm(state.habit)}
-      <button class="ghost" id="saveHabit">Save</button>
+    <div class="card"><h2>Your plan</h2>
+      ${planSummary()}
+      <button class="ghost" id="editPlan">Edit my plan</button>
     </div>
     <div class="card"><h2>Back up your progress</h2>
       <p style="margin-top:0" class="muted">Your progress is saved on this device. Save a backup now and then, especially before getting a new phone.</p>
@@ -542,10 +848,7 @@ function renderMore() {
       Seattle doesn't have an NBA team yet; the NBA was only exploring expansion as of October 2026.</p>
       <ul class="muted">${DATA.day1.sources.concat(DATA.teamsSource).map(u => `<li><a href="${esc(u)}" target="_blank" rel="noopener">${esc(u.replace(/^https:\/\/(www\.)?/, ""))}</a></li>`).join("")}</ul>
     </div>`;
-  wireHabitForm();
-  document.getElementById("saveHabit").onclick = () => {
-    state.habit = readHabitForm(); save(); alert("Saved."); render();
-  };
+  document.getElementById("editPlan").onclick = () => startWizard(true);
   const code = () => JSON.stringify(state);
   document.getElementById("exportBtn").onclick = () => {
     const blob = new Blob([code()], { type: "application/json" });
@@ -578,8 +881,11 @@ if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
   navigator.serviceWorker.register("sw.js").catch(() => {});
 }
 
+document.addEventListener("visibilitychange", () => { if (!document.hidden && state && !wiz) render(); });
+
 // For testing only.
 window.__sonics = { get state() { return state; }, teamRating, playerRating, checkIn, render, newState, daysFree, costPerDay,
+  tasksFor, openTaskCount, startWizard,
   reset() { state = null; try { localStorage.removeItem(KEY); } catch (e) {} } };
 </script>
 </body>

@@ -37,18 +37,21 @@ Done:
 - Savings dashboard (money, pouches not used, time nicotine-free), craving timer, habit settings.
 - Online at the address above.
 
+- Sign-up story, main battle + up to 2 goals (custom skill name and question), timed daily tasks
+  (morning report, goal check-ins, nightly check-in that plays the game), Today badge, catch-up for a missed night.
+
 Next, in order:
-1. Set the lineup before each game.
-2. Salaries, salary cap and cap space earned per clean day (plus a bonus for beaten cravings).
-   Day-1 players keep their real salaries; a labeled "dead money" line fills the rest of the cap.
-   The biggest contracts expire after season 1, unless there are too many slips (then they auto-extend).
-3. Offseason free agency: you sign real players from the (projected) 2027 free-agent class.
-4. In-season surprise trades and coach/GM changes (hidden from the owner until they happen).
-5. Push notifications.
+1. Media interviews (noon journal prompt) and a Journal tab; typing or iPhone dictation.
+2. Voice memos for interviews.
+3. Morale, cap money, endorsements, stadium; morale affects games; rewards paid next morning.
+4. Lineup, salaries/cap (real salaries + labeled dead money), offseason free agency, surprise trades/hires.
+5. Real phone notifications (needs a small free server, e.g. Cloudflare; the owner creates that account).
 
 ## Decisions
 
-- Quit date: Oct 22, 2026. Habit: 10-14 pouches/day (12 used), $5.33/tin, 15 pouches/tin assumed.
+- Main battles: nicotine, weed, drinking, porn, masturbation, video games, laziness/procrastination, working out.
+  Goals (up to 2): any of those plus relationships, new skill, reading, meditating, screen-free time.
+- Owner's plan: nicotine; goals = working out (10 AM) and real estate exam (4 PM). Quit date: Oct 22, 2026. Habit: 10-14 pouches/day (12 used), $5.33/tin, 15 pouches/tin assumed.
 - 82-game seasons, one game per check-in day; the next season starts after game 82.
 - Improvement is paced by clean days (~day 365 = good coach, an All-Star, lots of wins).
 - A slip = lose that day's game (and later, maybe one recent improvement); you keep the team.
