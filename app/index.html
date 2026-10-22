@@ -84,6 +84,16 @@ nav button .i { display: block; font-size: 20px; }
 .suspense { text-align: center; padding: 30px 0; font-weight: 700; color: var(--gold); }
 textarea { width: 100%; min-height: 90px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 8px; font: 12px monospace; }
 .hidden { display: none; }
+.econ-line { display: flex; justify-content: space-between; gap: 8px; margin: -4px 2px 14px; font-size: 13px; color: var(--muted); }
+.econ-line b { color: var(--gold); }
+.payout { background: var(--panel-2); border-radius: 10px; padding: 10px; margin: 8px 0; font-weight: 700; color: var(--win); }
+.meter-label { display: flex; justify-content: space-between; font-size: 14px; }
+.meter { height: 12px; border-radius: 6px; background: var(--bg); border: 1px solid var(--line); overflow: hidden; margin-top: 6px; }
+.meter div { height: 100%; background: linear-gradient(90deg, var(--loss), var(--gold), var(--win)); }
+button:disabled { opacity: .5; }
+#toast { position: fixed; left: 50%; top: calc(12px + env(safe-area-inset-top)); transform: translate(-50%, -80px); background: var(--gold); color: #1b1300;
+  font-weight: 800; padding: 10px 16px; border-radius: 12px; max-width: calc(100% - 32px); text-align: center; transition: transform .3s; z-index: 10; font-size: 14px; }
+#toast.show { transform: translate(-50%, 0); }
 .quote { font-style: italic; margin: 0 0 10px; }
 textarea.answer { min-height: 110px; font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
 .entry { padding: 12px 0; border-bottom: 1px solid var(--line); }
@@ -128,7 +138,7 @@ a { color: var(--gold); overflow-wrap: anywhere; }
   <button data-tab="today"><span class="i">🏀</span>Today<span id="todayBadge"></span></button>
   <button data-tab="games"><span class="i">📅</span>Games</button>
   <button data-tab="journal"><span class="i">🎤</span>Journal</button>
-  <button data-tab="roster"><span class="i">👥</span>Roster</button>
+  <button data-tab="roster"><span class="i">👥</span>Team</button>
   <button data-tab="news"><span class="i">📰</span>News<span id="newsBadge"></span></button>
   <button data-tab="more"><span class="i">⚙️</span>More</button>
 </nav>
@@ -241,6 +251,7 @@ function migrate(s) {
   if (!s.profile.times.interview) s.profile.times.interview = DEFAULT_TIMES.interview;
   if (!s.journal) s.journal = [];
   if (!s.interviews) s.interviews = {};
+  if (!s.econ) s.econ = newEcon();
   return s;
 }
 function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
@@ -263,6 +274,7 @@ function newState(profile, habit) {
     reportsRead: {},// {date: true}
     journal: [],    // {date, day, q, a, outlet, kind: "interview" | "note"}
     interviews: {}, // {date: {q, outlet, status: "open" | "answered" | "skipped"}}
+    econ: newEcon(),
   };
   s.schedule = makeSchedule(seed, 1);
   const n = (type, text) => s.news.push({ date: start, type, text });
@@ -378,8 +390,9 @@ function playGame(clean) {
   const opp = teamByAbbr(sched.opp);
   const rand = mulberry32(state.seed + state.season * 100003 + gameNo * 31 + 1);
   const mine = teamRating(state.roster);
-  const homeEdge = sched.home ? 2.5 : -2.5;
-  let margin = Math.round(mine - opp.srs + homeEdge + gauss(rand) * 12);
+  const homeEdge = sched.home ? 2.5 + state.econ.stadium * STADIUM_HOME_EDGE : -2.5;
+  const moraleEdge = (state.econ.morale - 50) / 10;   // +-5 points at the extremes
+  let margin = Math.round(mine - opp.srs + homeEdge + moraleEdge + gauss(rand) * 12);
   if (margin === 0) margin = rand() < 0.5 ? 1 : -1;  // no ties in basketball
   if (!clean && margin > 0) margin = -(1 + Math.floor(rand() * 12));  // slip day: the Sonics lose
   const oppPts = Math.round(113 + gauss(rand) * 8 - margin / 2);
@@ -404,6 +417,12 @@ function checkIn(clean, date = today()) {
   const game = playGame(clean);
   state.log.push({ date, clean, game });
   state.log.sort((a, b) => a.date < b.date ? -1 : 1);
+  if (clean) addPending({ cap: REWARD.cleanNightCap }, `Clean check-in (game ${game.no})`, date);
+  else award({ morale: REWARD.slipMorale }, "Slip day", date);
+  if (game.result === "W") award({ revenue: REWARD.winRevenue }, `Ticket sales (win, game ${game.no})`, date);
+  // Morale settles 30% back toward 50 every night, so it reflects how you've been showing up lately.
+  const e = state.econ, drift = (50 - e.morale) * REWARD.moraleSettle;
+  if (Math.abs(drift) >= 0.5) award({ morale: Math.round(drift) }, "Morale settles overnight", date);
   const where = game.home ? `at ${HOME_ARENA}` : `in ${game.oppName.split(" ").slice(0, -1).join(" ")}`;
   const verb = game.result === "W" ? "beat" : "fall to";
   state.news.push({
@@ -625,6 +644,10 @@ function gameCard(g, animate) {
   </div>`;
 }
 
+function econLine() {
+  const e = state.econ;
+  return `<div class="econ-line"><span>Morale <b>${Math.round(e.morale)}</b></span><span>Cap <b>${fmtM(e.cap)}</b></span><span>Revenue <b>${fmtM(e.revenue)}</b></span></div>`;
+}
 function statusCard() {
   const f = mainFocus();
   const cravings = state.cravings.filter(c => c.beaten).length;
@@ -805,6 +828,148 @@ function renderJournal() {
   });
 }
 
+// ---------- rewards: morale, cap space, revenue, endorsements, stadium ----------
+// All game money (in millions), not real NBA numbers. Brands are made up.
+const REWARD = {
+  cleanNightCap: 0.5,     // cap space for a clean nightly check-in, paid next morning
+  winRevenue: 0.25,       // ticket sales from a win
+  interviewRevenue: 0.25,
+  interviewMorale: 2,
+  goalMorale: 3,
+  reportMorale: 1,
+  cravingMorale: 2,
+  cravingCap: 0.1,
+  cravingsPerDay: 3,      // only the first 3 beaten cravings a day pay out
+  slipMorale: -8,
+  moraleSettle: 0.3,
+};
+const ENDORSEMENTS = [
+  { after: 1, brand: "Drizzle Dogs (hot dog stand)", amount: 0.5 },
+  { after: 3, brand: "Ferry Good Coffee", amount: 1 },
+  { after: 7, brand: "Big Rain Burgers", amount: 1.5 },
+  { after: 14, brand: "Orca Auto Glass", amount: 2 },
+  { after: 21, brand: "Sasquatch Sneakers", amount: 3 },
+  { after: 30, brand: "Summit Mattress Barn", amount: 4 },
+  { after: 45, brand: "Evergreen Credit Union", amount: 5 },
+  { after: 60, brand: "Salmon Run Sports Drink", amount: 6 },
+  { after: 90, brand: "Puget Power Electric", amount: 8 },
+  { after: 120, brand: "Northwest Air Taxi", amount: 10 },
+  { after: 180, brand: "Emerald Motors", amount: 12 },
+  { after: 250, brand: "Cascadia Wireless", amount: 15 },
+  { after: 365, brand: "Rain City Bank (arena naming rights)", amount: 20 },
+];
+const STADIUM = [
+  { name: "Leaky practice gym", cost: 0 },
+  { name: "Locker room refresh", cost: 3 },
+  { name: "New video scoreboard", cost: 8 },
+  { name: "Practice facility", cost: 15 },
+  { name: "Arena renovation", cost: 25 },
+  { name: "Dream arena", cost: 40 },
+];
+const STADIUM_HOME_EDGE = 0.75;   // extra home-court points per stadium level
+const STADIUM_MORALE = 5;
+
+function newEcon() { return { morale: 50, cap: 0, revenue: 0, stadium: 0, deals: [], pending: [], ledger: [] }; }
+function fmtM(x) { return "$" + (Math.round(x * 100) / 100).toFixed(2).replace(/\.?0+$/, "") + "M"; }
+
+// Apply a reward now. Returns a short text like "+3 morale" for a pop-up.
+function award({ cap = 0, revenue = 0, morale = 0 }, note, date = today()) {
+  const e = state.econ;
+  e.cap += cap; e.revenue += revenue;
+  e.morale = Math.max(0, Math.min(100, e.morale + morale));
+  e.ledger.push({ date, note, cap, revenue, morale });
+  if (e.ledger.length > 300) e.ledger.splice(0, e.ledger.length - 300);
+  const parts = [];
+  if (cap) parts.push(`${cap > 0 ? "+" : "−"}${fmtM(Math.abs(cap))} cap space`);
+  if (revenue) parts.push(`+${fmtM(revenue)} revenue`);
+  if (morale) parts.push(`${morale > 0 ? "+" : "−"}${Math.abs(morale)} morale`);
+  return parts.join(", ");
+}
+// Rewards that wait for the next morning report.
+function addPending(reward, note, date) { state.econ.pending.push({ ...reward, note, date }); }
+function collectPending() {
+  const lines = state.econ.pending.map(p => `${p.note}: ${award(p, p.note, p.date)}`);
+  state.econ.pending = [];
+  return lines;
+}
+
+function checkEndorsements(date) {
+  const answered = state.journal.filter(j => j.kind === "interview").length;
+  const got = [];
+  ENDORSEMENTS.forEach(d => {
+    if (answered >= d.after && !state.econ.deals.some(x => x.brand === d.brand)) {
+      state.econ.deals.push({ brand: d.brand, amount: d.amount, date });
+      award({ revenue: d.amount }, `Endorsement: ${d.brand}`, date);
+      state.news.push({ date, type: "DEAL", text: `Sonics sign an endorsement deal with ${d.brand}: ${fmtM(d.amount)}. (Made-up brand; game money.)` });
+      got.push(d);
+    }
+  });
+  return got;
+}
+
+function upgradeStadium() {
+  const e = state.econ, next = STADIUM[e.stadium + 1];
+  if (!next || e.revenue < next.cost) return false;
+  e.revenue -= next.cost;
+  e.stadium += 1;
+  award({ morale: STADIUM_MORALE }, `Stadium: ${next.name}`);
+  e.ledger[e.ledger.length - 1].revenue = -next.cost;
+  state.news.push({ date: today(), type: "STADIUM", text: `Sonics unveil their ${next.name.toLowerCase()} at ${HOME_ARENA}. The players love it.` });
+  save();
+  return true;
+}
+
+function cravingRewardsToday() {
+  const t = today();
+  return state.econ.ledger.filter(l => l.date === t && l.note === "Craving beaten").length;
+}
+
+function moraleLabel(m) {
+  return m >= 85 ? "Electric" : m >= 70 ? "Fired up" : m >= 55 ? "Good" : m >= 45 ? "Steady" : m >= 30 ? "Shaky" : "Rock bottom";
+}
+
+let toastTimer = null;
+function toast(msg) {
+  if (!msg) return;
+  let el = document.getElementById("toast");
+  if (!el) { el = document.createElement("div"); el.id = "toast"; document.body.appendChild(el); }
+  el.textContent = msg; el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), 2200);
+}
+
+function frontOfficeCard() {
+  const e = state.econ, next = STADIUM[e.stadium + 1];
+  const deals = e.deals.slice().reverse();
+  const recent = e.ledger.slice(-8).reverse();
+  const fmtL = l => [l.cap ? `${l.cap > 0 ? "+" : "−"}${fmtM(Math.abs(l.cap))} cap` : "", l.revenue ? `${l.revenue > 0 ? "+" : "−"}${fmtM(Math.abs(l.revenue))} rev` : "",
+    l.morale ? `${l.morale > 0 ? "+" : "−"}${Math.abs(l.morale)} morale` : ""].filter(Boolean).join(", ");
+  return `<div class="card"><h2>Front office</h2>
+    <div class="meter-label"><span>Team morale</span><b>${Math.round(e.morale)} · ${moraleLabel(e.morale)}</b></div>
+    <div class="meter"><div style="width:${e.morale}%"></div></div>
+    <p class="muted" style="margin:6px 0 12px">Morale above 50 helps the Sonics win; below 50 hurts. Show up for your daily tasks to raise it.</p>
+    <div class="stats">
+      <div><b>${fmtM(e.cap)}</b><span>cap space</span></div>
+      <div><b>${fmtM(e.revenue)}</b><span>revenue</span></div>
+      <div><b>${e.deals.length}</b><span>sponsors</span></div>
+    </div>
+  </div>
+  <div class="card"><h2>Stadium</h2>
+    <p style="margin-top:0">Now: <b>${esc(STADIUM[e.stadium].name)}</b> <span class="muted">(level ${e.stadium} of ${STADIUM.length - 1})</span></p>
+    ${next ? `<p class="muted">Next: ${esc(next.name)} for ${fmtM(next.cost)} of revenue. Each level adds home-court edge and morale.</p>
+      <button class="ghost ${e.revenue >= next.cost ? "yes" : ""}" id="upgradeBtn" ${e.revenue >= next.cost ? "" : "disabled"}>
+        ${e.revenue >= next.cost ? `Build it (${fmtM(next.cost)})` : `Need ${fmtM(next.cost - e.revenue)} more revenue`}</button>`
+      : `<p class="muted">You've built the dream arena.</p>`}
+  </div>
+  <div class="card"><h2>Endorsements</h2>
+    ${deals.length ? `<ul class="list">${deals.map(d => `<li><span class="grow">${esc(d.brand)}</span><b>${fmtM(d.amount)}</b></li>`).join("")}</ul>`
+      : `<p class="muted" style="margin:0">Answer media interviews to attract sponsors.</p>`}
+  </div>
+  ${recent.length ? `<div class="card"><h2>Recent earnings</h2><ul class="list">${recent.map(l =>
+    `<li><span class="grow">${esc(l.note)}<br><span class="muted">${prettyDate(l.date)}</span></span><span class="muted">${fmtL(l)}</span></li>`).join("")}</ul></div>` : ""}
+  <p class="muted">All money here is game money, not real NBA numbers. Sponsors are made-up brands.</p>`;
+}
+
 function taskRow(icon, text, cls = "") { return `<div class="task-row ${cls}">${icon} ${text}</div>`; }
 
 function taskCard(task) {
@@ -812,8 +977,11 @@ function taskCard(task) {
   if (task.kind === "report") {
     if (task.locked) return taskRow("🔒", `Morning report · ${fmtTime(task.time)}`, "locked");
     if (task.done) return taskRow("✅", "Morning report");
+    const pend = state.econ.pending;
+    const owed = pend.reduce((a, p) => a + (p.cap || 0), 0);
     return `<div class="card task"><h2>☀️ Morning report</h2>${reportBody()}
-      <button class="ghost" id="reportBtn">Got it</button></div>`;
+      ${owed ? `<p class="payout">💰 Ownership approved ${fmtM(owed)} of cap space for your clean night.</p>` : ""}
+      <button class="ghost yes" id="reportBtn">${owed ? "Collect" : "Got it"}</button></div>`;
   }
   if (task.kind === "interview") return interviewCard(task);
   if (task.kind === "goal") {
@@ -844,7 +1012,7 @@ function taskCard(task) {
 
 let lastOpenCount = -1;
 function renderToday() {
-  let html = statusCard();
+  let html = statusCard() + econLine();
   if (state.profile.needsGoals) {
     html += `<div class="card"><h2>New: daily goals</h2>
       <p style="margin-top:0">Pick up to two goals (working out, studying, reading...). Each one becomes a daily task.</p>
@@ -867,12 +1035,26 @@ function renderToday() {
   const on = (sel, fn) => document.querySelectorAll(sel).forEach(el => el.onclick = () => fn(el));
   on("#pickGoalsBtn", () => startWizard(true, 2));
   on("#craveBtn", startCraving);
-  on("#reportBtn", () => { state.reportsRead[today()] = true; save(); render(); });
+  on("#reportBtn", () => {
+    state.reportsRead[today()] = true;
+    const got = collectPending();
+    const m = award({ morale: REWARD.reportMorale }, "Read the morning report");
+    save(); render(); toast(got.length ? got.map(g => g.split(": ")[1]).join(", ") + ", " + m : m);
+  });
   const answerGoal = (id, val) => {
     const t = today();
-    state.goalLog[t] = { ...(state.goalLog[t] || {}), [id]: val }; save(); render();
+    state.goalLog[t] = { ...(state.goalLog[t] || {}), [id]: val };
+    const g = state.profile.goals.find(x => x.id === id);
+    const msg = val ? award({ morale: REWARD.goalMorale }, `Goal: ${g ? g.label : id}`) : "";
+    save(); render(); toast(msg);
   };
-  on("#ivSend", () => { if (answerInterview(today(), document.getElementById("ivText").value)) render(); });
+  on("#ivSend", () => {
+    if (!answerInterview(today(), document.getElementById("ivText").value)) return;
+    const msg = award({ revenue: REWARD.interviewRevenue, morale: REWARD.interviewMorale }, "Media interview");
+    const deals = checkEndorsements(today());
+    save(); render();
+    toast(deals.length ? `New sponsor: ${deals[deals.length - 1].brand}! ${msg}` : msg);
+  });
   on("#ivSkip", () => { interviewFor(today()).status = "skipped"; save(); render(); });
   on("[data-goal-yes]", el => answerGoal(el.dataset.goalYes, true));
   on("[data-goal-no]", el => answerGoal(el.dataset.goalNo, false));
@@ -918,10 +1100,13 @@ function startCraving() {
   }, 1000);
   document.getElementById("beatBtn").onclick = () => {
     clearInterval(t);
-    state.cravings.push({ at: new Date().toISOString(), beaten: true }); save();
+    state.cravings.push({ at: new Date().toISOString(), beaten: true });
+    const paid = cravingRewardsToday() < REWARD.cravingsPerDay
+      ? award({ cap: REWARD.cravingCap, morale: REWARD.cravingMorale }, "Craving beaten") : "";
+    save();
     main.innerHTML = `<div class="card final reveal"><h2>Craving beaten</h2>
       <div class="score">💪 ${state.cravings.filter(c => c.beaten).length}</div>
-      <p class="muted">That's one more the Sonics front office will remember.</p>
+      <p class="muted">${paid ? `The front office noticed: ${esc(paid)}.` : "That's one more the Sonics front office will remember."}</p>
       <button class="big" id="okBtn">Back to today</button></div>`;
     document.getElementById("okBtn").onclick = () => render();
   };
@@ -1044,8 +1229,8 @@ function renderGames() {
 function renderRoster() {
   const rows = state.roster.slice().sort((a, b) => playerRating(b) - playerRating(a)).map(p => `<tr>
     <td>${esc(p.name)}</td><td>${p.pos}</td><td class="n">${p.pts.toFixed(1)}</td><td class="n">${p.vorp.toFixed(1)}</td></tr>`).join("");
-  main.innerHTML = `
-    <div class="card"><h2>Front office</h2>
+  main.innerHTML = frontOfficeCard() + `
+    <div class="card"><h2>Staff</h2>
       <p style="margin:0">Head coach: <b>${esc(state.coach.name)}</b> <span class="muted">(${esc(state.coach.record)})</span></p>
       <p style="margin:6px 0 0">General manager: <b>${esc(state.gm.name)}</b></p>
     </div>
@@ -1054,6 +1239,12 @@ function renderRoster() {
       <tbody>${rows}</tbody></table>
       <p class="muted">PTS and VORP are real 2025-26 stats (Basketball-Reference). VORP below 0 means worse than a replacement-level player.</p>
     </div>`;
+  const up = document.getElementById("upgradeBtn");
+  if (up) up.onclick = () => {
+    const next = STADIUM[state.econ.stadium + 1];
+    if (!confirm(`Spend ${fmtM(next.cost)} of revenue on: ${next.name}?`)) return;
+    if (upgradeStadium()) { render(); toast(`${next.name} built! +${STADIUM_MORALE} morale`); }
+  };
 }
 
 function renderNews() {
@@ -1141,7 +1332,7 @@ document.addEventListener("visibilitychange", () => {
 
 // For testing only.
 window.__sonics = { get state() { return state; }, teamRating, playerRating, checkIn, render, newState, daysFree, costPerDay,
-  tasksFor, openTaskCount, startWizard, makeQuestion, get locked() { return locked; },
+  tasksFor, openTaskCount, startWizard, makeQuestion, upgradeStadium, award, playGame, get locked() { return locked; },
   reset() { state = null; try { localStorage.removeItem(KEY); } catch (e) {} } };
 </script>
 </body>

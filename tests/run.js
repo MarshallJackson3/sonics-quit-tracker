@@ -70,6 +70,7 @@ function check(name, ok, detail = "") {
   check("check-in locked until evening", (await page.$("[data-clean]")) === null);
   check("morning report says day 1", (await page.textContent(".task")).includes("Day 1"));
   await page.click("#reportBtn");
+  check("reading the report: +1 morale", (await S()).econ.morale === 51);
   await setDay(1, 21);
   await page.evaluate(() => window.__sonics.render());
   check("9 PM: four open tasks", await page.evaluate(() => window.__sonics.openTaskCount()) === 4);
@@ -80,6 +81,8 @@ function check(name, ok, detail = "") {
   await page.click("#ivSend");
   s = await S();
   check("interview answer saved to journal", s.journal.length === 1 && s.journal[0].a.includes("done with pouches") && s.journal[0].day === 1);
+  check("interview pays revenue, morale and first sponsor",
+    s.econ.revenue === 0.75 && s.econ.deals.length === 1 && s.econ.morale === 51 + 2, JSON.stringify([s.econ.revenue, s.econ.morale]));
   check("interview makes a news item", s.news.some(n => n.type === "PRESSER" && n.text.includes("President Marshall")));
   await page.click("[data-goal-yes=workout]");
   await page.click("[data-goal-no=skill]");
@@ -88,9 +91,20 @@ function check(name, ok, detail = "") {
   await page.click("[data-clean]");
   await page.waitForSelector(".final");
   s = await S();
+  check("clean check-in: cap space waits for the morning", s.econ.cap === 0 && s.econ.pending.length === 1 && s.econ.pending[0].cap === 0.5);
+  check("morale settles overnight toward 50", s.econ.morale === 56 + Math.round((50 - 56) * 0.3), String(s.econ.morale));
   check("check-in plays game 1", s.log.length === 1 && s.log[0].game.no === 1 && s.log[0].date === "2026-10-22");
   check("streak is 1", (await page.textContent("#streak")) === "1");
   check("all tasks done", (await page.textContent("main")).includes("All done for today"));
+
+  // Day 2 morning: collect the cap space.
+  await setDay(2, 8);
+  await page.evaluate(() => window.__sonics.render());
+  check("morning report offers the payout", (await page.textContent(".payout")).includes("$0.5M"));
+  await page.click("#reportBtn");
+  s = await S();
+  check("collecting pays cap space", s.econ.cap === 0.5 && s.econ.pending.length === 0);
+  check("Today shows morale and cap", (await page.textContent(".econ-line")).includes("$0.5M"));
 
   // Day 2: a slip. The Sonics lose, the streak resets, the team stays.
   await setDay(2);
@@ -102,6 +116,7 @@ function check(name, ok, detail = "") {
   check("slip day is a loss", s.log[1].game.result === "L" && s.log[1].game.slip);
   check("slip resets streak", (await page.textContent("#streak")) === "0");
   check("slip keeps roster", s.roster.length === 18);
+  check("slip costs morale, no cap space", s.econ.pending.length === 0 && s.econ.ledger.some(l => l.note === "Slip day" && l.morale === -8));
 
   await setDay(3, 13);
   check("after a slip, the interview asks about it", (await page.evaluate(() => window.__sonics.makeQuestion("2026-10-24"))).includes("Tough day"));
@@ -141,6 +156,27 @@ function check(name, ok, detail = "") {
   await page.click("#beatBtn");
   check("craving logged", (await S()).cravings.length === 1);
   await page.click("#okBtn");
+  for (let i = 0; i < 3; i++) { await page.click("#craveBtn"); await page.click("#beatBtn"); await page.click("#okBtn"); }
+  check("only 3 cravings a day pay", (await S()).econ.ledger.filter(l => l.note === "Craving beaten").length === 3);
+
+  // Morale changes games: same seed, same game, higher morale = bigger margin.
+  const margins = await page.evaluate(() => {
+    const st = window.__sonics.state, keep = st.econ.morale, out = [];
+    for (const m of [0, 100]) { st.econ.morale = m; out.push(window.__sonics.playGame(true)); }
+    st.econ.morale = keep;
+    return out.map(g => g.my - g.them);
+  });
+  check("morale 100 plays 10 points better than morale 0", margins[1] - margins[0] === 10, JSON.stringify(margins));
+
+  // Stadium: not enough revenue, then enough.
+  await page.evaluate(() => { window.__sonics.state.econ.revenue = 1; });
+  await page.click("nav button[data-tab=roster]");
+  check("stadium upgrade needs revenue", await page.isDisabled("#upgradeBtn"));
+  await page.evaluate(() => { window.__sonics.state.econ.revenue = 5; window.__sonics.render(); });
+  page.once("dialog", d => d.accept());
+  await page.click("#upgradeBtn");
+  s = await S();
+  check("stadium upgraded", s.econ.stadium === 1 && s.econ.revenue === 2 && (await page.textContent("main")).includes("Locker room refresh"));
 
   // Every tab renders, with no sideways scrolling on a phone.
   for (const t of ["games", "journal", "roster", "news", "more", "today"]) {

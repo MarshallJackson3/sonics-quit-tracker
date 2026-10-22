@@ -46,9 +46,15 @@ Done:
   first win, streak and savings milestones, losing/winning streaks, or a rotating everyday question).
   Answers (typed or iPhone dictation) go to the Journal tab, which also takes free notes. Outlets are made up.
 
+- Rewards (game money, labeled in the app; numbers in REWARD / ENDORSEMENTS / STADIUM in app/index.html):
+  clean night +$0.5M cap space (collected in the next morning report), win +$0.25M revenue, goal yes +3 morale,
+  interview +$0.25M revenue +2 morale + endorsement deals at 1, 3, 7, 14... interviews (made-up brands),
+  craving beaten +2 morale +$0.1M cap (3/day max), report +1 morale, slip -8 morale. Morale settles 30% toward
+  50 each night. Morale shifts game margin by (morale-50)/10 points; each stadium level adds 0.75 home points.
+  Team tab (was Roster) shows the front office: morale meter, cap, revenue, stadium upgrades, sponsors, earnings.
+
 Next, in order:
-2. Voice memos for interviews.
-3. Morale, cap money, endorsements, stadium; morale affects games; rewards paid next morning.
+- Voice memos for interviews (on hold, owner's call).
 4. Lineup, salaries/cap (real salaries + labeled dead money), offseason free agency, surprise trades/hires.
 5. Real phone notifications (needs a small free server, e.g. Cloudflare; the owner creates that account).
 
