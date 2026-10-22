@@ -17,7 +17,7 @@ If so: right-click the file, choose **Open**, then click **Open** again. After t
 ## Where things live
 
 - **This folder on your Desktop** is the main copy.
-- **GitHub** (private repo https://github.com/MarshallJackson3/sonics-quit-tracker) is the backup.
+- **GitHub** (public repo https://github.com/MarshallJackson3/sonics-quit-tracker) is the backup.
 - **Your progress** (games, streak, news) is stored in the app on each device, not in this folder.
   Use the app's **More → Save backup file** to keep a copy.
 
