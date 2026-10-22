@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sonics Quit Tracker</title>
+<meta name="theme-color" content="#0b2a20">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Sonics">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-180.png">
+<style>
+:root {
+  --bg: #07170f;
+  --panel: #0e2a1e;
+  --panel-2: #133a29;
+  --line: #1f4d38;
+  --text: #eef5ef;
+  --muted: #9db8a7;
+  --green: #00653a;
+  --gold: #ffc72c;
+  --win: #4ade80;
+  --loss: #f87171;
+  --radius: 14px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); }
+body {
+  font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  padding: env(safe-area-inset-top) 0 calc(72px + env(safe-area-inset-bottom));
+  min-height: 100vh; overflow-x: hidden;
+}
+header {
+  background: linear-gradient(135deg, var(--green), #0b2a20 70%);
+  border-bottom: 3px solid var(--gold);
+  padding: 14px 16px 12px;
+}
+header .team { font-weight: 800; letter-spacing: .06em; font-size: 13px; color: var(--gold); }
+header .rec { font-size: 26px; font-weight: 800; }
+header .sub { font-size: 13px; color: var(--muted); }
+main { padding: 16px; max-width: 560px; margin: 0 auto; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; margin-bottom: 14px; }
+.card h2 { margin: 0 0 8px; font-size: 15px; letter-spacing: .04em; text-transform: uppercase; color: var(--gold); }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; text-align: center; }
+.stats b { display: block; font-size: 28px; line-height: 1.1; }
+.stats span { font-size: 12px; color: var(--muted); }
+button { font: inherit; cursor: pointer; border-radius: 12px; border: 0; }
+.big {
+  width: 100%; padding: 18px 12px; font-size: 18px; font-weight: 800;
+  background: var(--gold); color: #1b1300; box-shadow: 0 4px 0 #b88a00;
+}
+.big:active { transform: translateY(2px); box-shadow: 0 2px 0 #b88a00; }
+.slip { width: 100%; margin-top: 12px; padding: 12px; background: transparent; color: var(--muted); border: 1px solid var(--line); }
+.ghost { padding: 10px 14px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); }
+.row { display: flex; gap: 10px; flex-wrap: wrap; }
+.muted { color: var(--muted); font-size: 13px; }
+.final { text-align: center; }
+.final .score { font-size: 34px; font-weight: 800; margin: 6px 0; }
+.final .wl { font-weight: 800; letter-spacing: .1em; }
+.W { color: var(--win); } .L { color: var(--loss); }
+.list { list-style: none; margin: 0; padding: 0; }
+.list li { padding: 10px 0; border-bottom: 1px solid var(--line); display: flex; gap: 10px; align-items: baseline; }
+.list li:last-child { border-bottom: 0; }
+.list .grow { flex: 1; min-width: 0; }
+.tag { font-size: 11px; font-weight: 800; letter-spacing: .06em; padding: 2px 6px; border-radius: 6px; background: var(--panel-2); color: var(--gold); white-space: nowrap; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { text-align: left; padding: 7px 4px; border-bottom: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 600; font-size: 12px; }
+td.n, th.n { text-align: right; }
+nav {
+  position: fixed; left: 0; right: 0; bottom: 0; display: flex;
+  background: #0b2a20; border-top: 1px solid var(--line);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+nav button { flex: 1; background: none; color: var(--muted); padding: 10px 0 12px; font-size: 12px; border-radius: 0; }
+nav button.on { color: var(--gold); }
+nav button .i { display: block; font-size: 20px; }
+.badge { display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 9px; background: var(--loss); color: #fff; font-size: 11px; margin-left: 2px; }
+.reveal { animation: pop .5s ease-out; }
+@keyframes pop { from { transform: scale(.92); opacity: 0; } to { transform: none; opacity: 1; } }
+.suspense { text-align: center; padding: 30px 0; font-weight: 700; color: var(--gold); }
+textarea { width: 100%; min-height: 90px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 8px; font: 12px monospace; }
+.hidden { display: none; }
+a { color: var(--gold); overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<header>
+  <div class="team">SEATTLE SUPERSONICS</div>
+  <div class="rec" id="hdrRec">0–0</div>
+  <div class="sub" id="hdrSub"></div>
+</header>
+<main id="main"></main>
+<nav id="nav">
+  <button data-tab="today"><span class="i">🏀</span>Today</button>
+  <button data-tab="games"><span class="i">📅</span>Games</button>
+  <button data-tab="roster"><span class="i">👥</span>Roster</button>
+  <button data-tab="news"><span class="i">📰</span>News<span id="newsBadge"></span></button>
+  <button data-tab="more"><span class="i">⚙️</span>More</button>
+</nav>
+<script src="data.js"></script>
+<script>
+"use strict";
+const DATA = window.SONICS_DATA;
+const KEY = "sonics.v1";
+const SEASON_GAMES = 82;
+const HOME_ARENA = "Climate Pledge Arena";
+const ROTATION_MINUTES = [34, 32, 30, 30, 28, 24, 22, 20, 20];
+
+// ---------- helpers ----------
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function gauss(rand) {
+  let u = 0, v = 0;
+  while (u === 0) u = rand();
+  while (v === 0) v = rand();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+function ymd(d) {
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+function today() { return ymd(window.__fakeNow ? window.__fakeNow() : new Date()); }
+function addDays(dateStr, n) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return ymd(new Date(y, m - 1, d + n));
+}
+function prettyDate(dateStr) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]); }
+
+// ---------- player and team strength ----------
+// A player's rating is last season's Box Plus/Minus, pulled toward replacement level (-2)
+// when he played few minutes, so a 5-game fluke doesn't count as much as a full season.
+function playerRating(p) {
+  const minutes = p.g * p.mp;
+  return (p.bpm * minutes - 2 * 400) / (minutes + 400);
+}
+function rotation(roster) {
+  return roster.slice().sort((a, b) => playerRating(b) - playerRating(a)).slice(0, ROTATION_MINUTES.length);
+}
+// Tuned (the 0.75) so a lineup of the worst free agents wins about 15 games a season on average,
+// in line with the worst real NBA teams.
+function teamRating(roster) {
+  return 0.75 * rotation(roster).reduce((sum, p, i) => sum + playerRating(p) * ROTATION_MINUTES[i], 0) / 48;
+}
+
+// ---------- state ----------
+function load() {
+  try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && s.version === 1) return s; } catch (e) {}
+  return null;
+}
+function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
+
+function newState() {
+  const start = today();
+  const seed = Math.floor(Math.random() * 2 ** 31);
+  const s = {
+    version: 1, seed, startDate: start, season: 1,
+    roster: DATA.day1.roster.map(p => ({ ...p })),
+    coach: { ...DATA.day1.coach }, gm: { ...DATA.day1.gm },
+    log: [],        // one entry per day you checked in: {date, clean, game}
+    seasons: [],    // finished seasons: {season, w, l}
+    news: [],
+    newsSeen: 0,
+  };
+  s.schedule = makeSchedule(seed, 1);
+  const n = (type, text) => s.news.push({ date: start, type, text });
+  n("FRANCHISE", "The Seattle SuperSonics are back (in this what-if world). Expectations: very, very low.");
+  n("HIRED", `Sonics name ${s.gm.name} general manager. ${s.gm.fact}`);
+  n("HIRED", `Sonics name ${s.coach.name} head coach. Career record: ${s.coach.record}.`);
+  n("SIGNED", `Sonics sign 18 free agents nobody else wanted, led by ${s.roster[0].name} (worst VORP among available players last season).`);
+  return s;
+}
+
+function makeSchedule(seed, season) {
+  const rand = mulberry32(seed + season * 7919);
+  const teams = DATA.teams.map(t => t.abbr);
+  const games = [];
+  teams.forEach(t => { games.push({ opp: t, home: true }); games.push({ opp: t, home: false }); });
+  while (games.length < SEASON_GAMES) {
+    games.push({ opp: teams[Math.floor(rand() * teams.length)], home: games.length % 2 === 0 });
+  }
+  for (let i = games.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [games[i], games[j]] = [games[j], games[i]];
+  }
+  return games;
+}
+
+let state = load() || null;
+
+// ---------- derived numbers ----------
+function seasonGames(s = state) { return s.log.filter(e => e.game && e.game.season === s.season).map(e => e.game); }
+function record(games) {
+  return { w: games.filter(g => g.result === "W").length, l: games.filter(g => g.result === "L").length };
+}
+function cleanDays() { return state.log.filter(e => e.clean).length; }
+function streak() {
+  let n = 0;
+  let d = today();
+  const byDate = Object.fromEntries(state.log.map(e => [e.date, e]));
+  if (!byDate[d]) d = addDays(d, -1);   // today not logged yet: count up to yesterday
+  while (byDate[d] && byDate[d].clean) { n++; d = addDays(d, -1); }
+  return n;
+}
+function todaysEntry() { return state.log.find(e => e.date === today()); }
+function teamByAbbr(a) { return DATA.teams.find(t => t.abbr === a); }
+
+// ---------- playing a game ----------
+function playGame(clean) {
+  const gameNo = seasonGames().length;            // 0-based index in this season
+  const sched = state.schedule[gameNo];
+  const opp = teamByAbbr(sched.opp);
+  const rand = mulberry32(state.seed + state.season * 100003 + gameNo * 31 + 1);
+  const mine = teamRating(state.roster);
+  const homeEdge = sched.home ? 2.5 : -2.5;
+  let margin = Math.round(mine - opp.srs + homeEdge + gauss(rand) * 12);
+  if (margin === 0) margin = rand() < 0.5 ? 1 : -1;  // no ties in basketball
+  if (!clean && margin > 0) margin = -(1 + Math.floor(rand() * 12));  // slip day: the Sonics lose
+  const oppPts = Math.round(113 + gauss(rand) * 8 - margin / 2);
+  const myPts = oppPts + margin;
+
+  // Split the Sonics' points among the rotation, weighted by how much each player scored last season.
+  const rot = rotation(state.roster);
+  const weights = rot.map((p, i) => (p.pts + 1) * ROTATION_MINUTES[i] * (0.6 + rand() * 0.8));
+  const total = weights.reduce((a, b) => a + b, 0);
+  const box = rot.map((p, i) => ({ name: p.name, pts: Math.round(myPts * weights[i] / total) }))
+    .sort((a, b) => b.pts - a.pts);
+
+  return {
+    season: state.season, no: gameNo + 1, opp: opp.abbr, oppName: opp.name, home: sched.home,
+    my: myPts, them: oppPts, result: margin > 0 ? "W" : "L", top: box[0], slip: !clean,
+  };
+}
+
+function checkIn(clean) {
+  if (todaysEntry()) return;
+  const game = playGame(clean);
+  state.log.push({ date: today(), clean, game });
+  const where = game.home ? `at ${HOME_ARENA}` : `in ${game.oppName.split(" ").slice(0, -1).join(" ")}`;
+  const verb = game.result === "W" ? "beat" : "fall to";
+  state.news.push({
+    date: today(), type: game.result === "W" ? "WIN" : "LOSS",
+    text: `Game ${game.no}: Sonics ${verb} the ${game.oppName} ${game.my}–${game.them} ${where}. ${game.top.name} led Seattle with ${game.top.pts}.`
+      + (game.slip ? " (Slip day. Tomorrow is a new game.)" : ""),
+  });
+  if (seasonGames().length >= SEASON_GAMES) endSeason();
+  save();
+}
+
+function endSeason() {
+  const r = record(seasonGames());
+  state.seasons.push({ season: state.season, w: r.w, l: r.l });
+  state.news.push({ date: today(), type: "SEASON", text: `Season ${state.season} is over. Final record: ${r.w}–${r.l}. Season ${state.season + 1} tips off next time you check in.` });
+  state.season += 1;
+  state.schedule = makeSchedule(state.seed, state.season);
+}
+
+// ---------- screens ----------
+let tab = "today";
+let justPlayed = false;
+const main = document.getElementById("main");
+
+function render() {
+  if (!state) { renderWelcome(); return; }
+  const r = record(seasonGames());
+  document.getElementById("hdrRec").textContent = `${r.w}–${r.l}`;
+  document.getElementById("hdrSub").textContent =
+    `Season ${state.season} · Coach ${state.coach.name} · GM ${state.gm.name}`;
+  const unseen = state.news.length - state.newsSeen;
+  document.getElementById("newsBadge").innerHTML = unseen > 0 && tab !== "news" ? `<span class="badge">${unseen}</span>` : "";
+  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("on", b.dataset.tab === tab));
+  ({ today: renderToday, games: renderGames, roster: renderRoster, news: renderNews, more: renderMore })[tab]();
+  window.scrollTo(0, 0);
+}
+
+function renderWelcome() {
+  document.getElementById("nav").classList.add("hidden");
+  main.innerHTML = `
+    <div class="card">
+      <h2>Welcome to Seattle</h2>
+      <p>You now run the (what-if) Seattle SuperSonics. The roster is 18 real free agents that no NBA team signed. They are very bad.</p>
+      <p>Every day you stay nicotine-free, check in and the Sonics play a game. As your clean days stack up, the front office will make moves. You won't know what's coming until it happens.</p>
+      <p class="muted">Players, stats, coaches and GMs are real as of ${esc(DATA.day1.snapshotDate)}. The games are simulated. Seattle doesn't have an NBA team yet.</p>
+      <button class="big" id="startBtn">Start my journey</button>
+    </div>`;
+  document.getElementById("startBtn").onclick = () => {
+    state = newState(); save();
+    document.getElementById("nav").classList.remove("hidden");
+    tab = "today"; render();
+  };
+}
+
+function gameCard(g, animate) {
+  const where = g.home ? `vs ${g.opp}` : `@ ${g.opp}`;
+  return `<div class="card final ${animate ? "reveal" : ""}">
+    <h2>Game ${g.no} · ${where}</h2>
+    <div class="wl ${g.result}">${g.result === "W" ? "WIN" : "LOSS"}</div>
+    <div class="score">SEA ${g.my} – ${g.them} ${g.opp}</div>
+    <div class="muted">Top scorer: ${esc(g.top.name)}, ${g.top.pts} pts</div>
+    ${g.slip ? `<p class="muted">Slip days happen. You keep your team, and tomorrow is a new game.</p>` : ""}
+  </div>`;
+}
+
+function renderToday() {
+  const entry = todaysEntry();
+  const nextNo = seasonGames().length + 1;
+  const next = state.schedule[nextNo - 1];
+  let html = `<div class="card"><div class="stats">
+      <div><b>${streak()}</b><span>day streak</span></div>
+      <div><b>${cleanDays()}</b><span>clean days</span></div>
+      <div><b>${state.season}</b><span>season</span></div>
+    </div></div>`;
+  if (entry) {
+    html += gameCard(entry.game, justPlayed);
+    html += `<p class="muted" style="text-align:center">Come back tomorrow for the next game.</p>`;
+  } else {
+    const opp = teamByAbbr(next.opp);
+    html += `<div class="card">
+      <h2>Tonight · Game ${nextNo} of ${SEASON_GAMES}</h2>
+      <p style="margin-top:0">${next.home ? "Home vs" : "Away @"} <b>${esc(opp.name)}</b>
+        <span class="muted">(${opp.w}–${opp.l} last season)</span></p>
+      <button class="big" id="cleanBtn">✅ I stayed nicotine-free today</button>
+      <button class="slip" id="slipBtn">I slipped today</button>
+    </div>`;
+  }
+  main.innerHTML = html;
+  if (!entry) {
+    document.getElementById("cleanBtn").onclick = () => tipOff(true);
+    document.getElementById("slipBtn").onclick = () => {
+      if (confirm("Log a slip for today? You'll keep your team, but the Sonics lose today's game.")) tipOff(false);
+    };
+  }
+  justPlayed = false;
+}
+
+function tipOff(clean) {
+  main.innerHTML = `<div class="card suspense">🏀 Tip-off…</div>`;
+  setTimeout(() => { checkIn(clean); justPlayed = true; render(); }, window.__fast ? 0 : 1400);
+}
+
+function renderGames() {
+  const games = seasonGames().slice().reverse();
+  const past = state.seasons.map(s => `<li><span class="grow">Season ${s.season}</span><b>${s.w}–${s.l}</b></li>`).join("");
+  main.innerHTML = `
+    <div class="card"><h2>Season ${state.season} results</h2>
+      ${games.length ? `<ul class="list">${games.map(g => `<li>
+        <span class="tag">G${g.no}</span>
+        <span class="grow">${g.home ? "vs" : "@"} ${esc(g.oppName)}</span>
+        <b class="${g.result}">${g.result} ${g.my}–${g.them}</b></li>`).join("")}</ul>`
+        : `<p class="muted">No games yet. Check in on the Today tab.</p>`}
+    </div>
+    ${past ? `<div class="card"><h2>Past seasons</h2><ul class="list">${past}</ul></div>` : ""}`;
+}
+
+function renderRoster() {
+  const rows = state.roster.slice().sort((a, b) => playerRating(b) - playerRating(a)).map(p => `<tr>
+    <td>${esc(p.name)}</td><td>${p.pos}</td><td class="n">${p.pts.toFixed(1)}</td><td class="n">${p.vorp.toFixed(1)}</td></tr>`).join("");
+  main.innerHTML = `
+    <div class="card"><h2>Front office</h2>
+      <p style="margin:0">Head coach: <b>${esc(state.coach.name)}</b> <span class="muted">(${esc(state.coach.record)})</span></p>
+      <p style="margin:6px 0 0">General manager: <b>${esc(state.gm.name)}</b></p>
+    </div>
+    <div class="card"><h2>Roster (${state.roster.length})</h2>
+      <table><thead><tr><th>Player</th><th>Pos</th><th class="n">PTS</th><th class="n">VORP</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+      <p class="muted">PTS and VORP are real 2025-26 stats (Basketball-Reference). VORP below 0 means worse than a replacement-level player.</p>
+    </div>`;
+}
+
+function renderNews() {
+  state.newsSeen = state.news.length; save();
+  const items = state.news.slice().reverse().map(n => `<li>
+    <span class="tag">${esc(n.type)}</span>
+    <span class="grow">${esc(n.text)}<br><span class="muted">${prettyDate(n.date)}</span></span></li>`).join("");
+  main.innerHTML = `<div class="card"><h2>Sonics news</h2><ul class="list">${items}</ul></div>`;
+}
+
+function renderMore() {
+  const installed = window.navigator.standalone || matchMedia("(display-mode: standalone)").matches;
+  main.innerHTML = `
+    ${installed ? "" : `<div class="card"><h2>Put it on your iPhone</h2>
+      <p style="margin:0">In Safari, tap the Share button (square with an arrow), then <b>Add to Home Screen</b>.</p></div>`}
+    <div class="card"><h2>Back up your progress</h2>
+      <p style="margin-top:0" class="muted">Your progress is saved on this device. Save a backup now and then, especially before getting a new phone.</p>
+      <div class="row">
+        <button class="ghost" id="exportBtn">Save backup file</button>
+        <button class="ghost" id="copyBtn">Copy backup code</button>
+      </div>
+      <p class="muted">To restore: paste a backup code below, or choose a backup file.</p>
+      <textarea id="importText" placeholder="Paste backup code here"></textarea>
+      <div class="row" style="margin-top:8px">
+        <button class="ghost" id="importBtn">Restore from code</button>
+        <label class="ghost" style="display:inline-block;border-radius:12px">Restore from file
+          <input type="file" id="importFile" accept=".json,application/json" class="hidden"></label>
+      </div>
+    </div>
+    <div class="card"><h2>About the data</h2>
+      <p style="margin-top:0" class="muted">Players, stats, coaches and GMs are real as of ${esc(DATA.day1.snapshotDate)}.
+      Games are simulated: a team's strength comes from its players' real 2025-26 Box Plus/Minus, and opponents use their real 2025-26 SRS.
+      Seattle doesn't have an NBA team yet; the NBA was only exploring expansion as of October 2026.</p>
+      <ul class="muted">${DATA.day1.sources.concat(DATA.teamsSource).map(u => `<li><a href="${esc(u)}" target="_blank" rel="noopener">${esc(u.replace(/^https:\/\/(www\.)?/, ""))}</a></li>`).join("")}</ul>
+    </div>`;
+  const code = () => JSON.stringify(state);
+  document.getElementById("exportBtn").onclick = () => {
+    const blob = new Blob([code()], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = `sonics-backup-${today()}.json`; a.click();
+  };
+  document.getElementById("copyBtn").onclick = async () => {
+    try { await navigator.clipboard.writeText(code()); alert("Backup code copied. Paste it into Notes to keep it safe."); }
+    catch (e) { document.getElementById("importText").value = code(); alert("Couldn't copy automatically. The code is in the box below; select it and copy."); }
+  };
+  const restore = text => {
+    try {
+      const s = JSON.parse(text);
+      if (!s || s.version !== 1 || !Array.isArray(s.log)) throw new Error("bad");
+      if (!confirm(`Restore this backup (${s.log.length} days logged)? It replaces what's on this device.`)) return;
+      state = s; save(); tab = "today"; render();
+    } catch (e) { alert("That doesn't look like a Sonics backup."); }
+  };
+  document.getElementById("importBtn").onclick = () => restore(document.getElementById("importText").value);
+  document.getElementById("importFile").onchange = e => {
+    const f = e.target.files[0]; if (f) f.text().then(restore);
+  };
+}
+
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => { tab = b.dataset.tab; render(); });
+if (!state) document.getElementById("nav").classList.add("hidden");
+render();
+
+if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+}
+
+// For testing only.
+window.__sonics = { get state() { return state; }, teamRating, playerRating, checkIn, render, newState,
+  reset() { state = null; try { localStorage.removeItem(KEY); } catch (e) {} } };
+</script>
+</body>
+</html>

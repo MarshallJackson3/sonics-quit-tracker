@@ -1,0 +1,7 @@
+{
+  "name": "sonics-tests",
+  "private": true,
+  "description": "Browser tests for the app in ../app",
+  "scripts": { "test": "node run.js" },
+  "devDependencies": { "playwright": "1.47.2" }
+}
