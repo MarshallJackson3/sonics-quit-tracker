@@ -277,6 +277,15 @@ function check(name, ok, detail = "") {
   s = await S();
   check("stadium upgraded", s.econ.stadium === 1 && s.econ.revenue === 2 && (await page.textContent("main")).includes("Locker room refresh"));
 
+  // Pop-up messages disappear completely after showing.
+  await page.evaluate(() => { document.getElementById("toast") || window.__sonics.award({ morale: 0 }, "x"); });
+  const toastGone = await page.evaluate(async () => {
+    const el = document.getElementById("toast"); if (!el) return true;
+    await new Promise(r => setTimeout(r, 2700));
+    const cs = getComputedStyle(el); return cs.visibility === "hidden" && cs.opacity === "0";
+  });
+  check("pop-up message fully hides", toastGone);
+
   // Every tab renders, with no sideways scrolling on a phone.
   for (const t of ["games", "journal", "roster", "news", "more", "today"]) {
     await page.click(`nav button[data-tab=${t}]`);
