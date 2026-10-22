@@ -61,9 +61,13 @@ Done:
   2026-27 or have a 2027-28 option, rated on 2025-26 stats; asking prices are estimates, +30% (capped at the
   max contract) if team appeal is too low; other teams sign ~8% of the top 60 each day.
 
+- Lineups: daily task (opens with the morning report, in season) to pick 5 starters; +1 morale. One player is
+  hot (+2) and one cold (-2) each day (named in the report). No guard or no PF/C in the five = -1.5 each.
+  Skipped = coach starts the 5 best-rated.
+
 Next, in order:
 - Voice memos for interviews (on hold, owner's call).
-4. Lineup, surprise in-season trades and coach/GM hires.
+4. Surprise in-season trades and coach/GM hires (hidden from the owner).
 5. Real phone notifications (needs a small free server, e.g. Cloudflare; the owner creates that account).
 
 ## Decisions

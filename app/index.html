@@ -84,6 +84,10 @@ nav button .i { display: block; font-size: 20px; }
 .suspense { text-align: center; padding: 30px 0; font-weight: 700; color: var(--gold); }
 textarea { width: 100%; min-height: 90px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 8px; font: 12px monospace; }
 .hidden { display: none; }
+.lineup { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.pick.lu { text-align: left; padding: 8px 10px; font-size: 14px; }
+.pick.lu span { display: block; font-size: 11px; opacity: .75; font-weight: 400; }
+.warn { color: var(--gold); font-weight: 700; margin: 0 0 8px; }
 .fatable td { vertical-align: top; }
 .ghost.sm { padding: 6px 10px; font-size: 14px; }
 .search { width: 100%; padding: 10px; font-size: 16px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; }
@@ -229,6 +233,44 @@ function playerRating(p) {
 function rotation(roster) {
   return roster.slice().sort((a, b) => playerRating(b) - playerRating(a)).slice(0, ROTATION_MINUTES.length);
 }
+// ---------- lineups ----------
+// Each day one player is hot (+2) and one is cold (-2); the morning report says who.
+const FORM_BONUS = 2;
+const BALANCE_PENALTY = 1.5;   // points lost for a starting five with no guard, or no big man
+function dailyForm(date) {
+  const names = state.roster.map(p => p.name).sort();
+  if (names.length < 2) return { hot: null, cold: null };
+  const rand = mulberry32(state.seed + hashStr(date + "form"));
+  const hot = names[Math.floor(rand() * names.length)];
+  let cold = names[Math.floor(rand() * names.length)];
+  if (cold === hot) cold = names[(names.indexOf(hot) + 1) % names.length];
+  return { hot, cold };
+}
+function formAdj(p, date) { const f = dailyForm(date); return p.name === f.hot ? FORM_BONUS : p.name === f.cold ? -FORM_BONUS : 0; }
+function autoStarters() { return rotation(state.roster).slice(0, 5).map(p => p.name); }
+function starterNames() {
+  const valid = (state.lineup || []).filter(n => state.roster.some(p => p.name === n));
+  return valid.length === 5 ? valid : autoStarters();
+}
+function gameRotation() {
+  const st = starterNames();
+  const starters = st.map(n => state.roster.find(p => p.name === n));
+  const bench = state.roster.filter(p => !st.includes(p.name)).sort((a, b) => playerRating(b) - playerRating(a));
+  return starters.concat(bench).slice(0, ROTATION_MINUTES.length);
+}
+const isGuard = p => /G/.test(p.pos);
+const isBig = p => /C|PF/.test(p.pos);
+function balancePenalty(names) {
+  const ps = names.map(n => state.roster.find(p => p.name === n)).filter(Boolean);
+  return (ps.some(isGuard) ? 0 : BALANCE_PENALTY) + (ps.some(isBig) ? 0 : BALANCE_PENALTY);
+}
+// Tonight's strength: the starters you chose, today's hot/cold players, and lineup balance.
+function lineupRating(date) {
+  const rot = gameRotation();
+  const sum = ROTATION_MINUTES.reduce((a, m, i) => a + (rot[i] ? playerRating(rot[i]) + formAdj(rot[i], date) : -2) * m, 0);
+  return 0.75 * sum / 48 - balancePenalty(starterNames());
+}
+
 // Tuned (the 0.75) so a lineup of the worst free agents wins about 15 games a season on average,
 // in line with the worst real NBA teams.
 function teamRating(roster) {
@@ -257,6 +299,7 @@ function migrate(s) {
   if (!s.interviews) s.interviews = {};
   if (!s.econ) s.econ = newEcon();
   if (!s.phase) s.phase = "season";
+  if (!s.lineupSet) s.lineupSet = {};
   if (s.deadStart === undefined) {
     // Saves from before contracts: give the Day-1 players their real salaries and contract lengths.
     s.roster.forEach(p => {
@@ -289,6 +332,8 @@ function newState(profile, habit) {
     interviews: {}, // {date: {q, outlet, status: "open" | "answered" | "skipped"}}
     econ: newEcon(),
     phase: "season",  // "season" or "offseason"
+    lineup: null,     // names of the 5 starters (null = coach picks)
+    lineupSet: {},    // {date: true}
     deadStart: DATA.day1.cap - DATA.day1.roster.reduce((a, p) => a + p.salary, 0),
   };
   s.schedule = makeSchedule(seed, 1);
@@ -387,6 +432,9 @@ function tasksFor() {
     add({ id: "catchup", kind: "main", date: y, time: null, done: false });
   }
   add({ id: "report", kind: "report", time: p.times.morning, done: !!state.reportsRead[t] });
+  if (state.phase !== "offseason" && !todaysEntry()) {
+    add({ id: "lineup", kind: "lineup", time: p.times.morning, done: !!state.lineupSet[t] });
+  }
   p.goals.forEach(g => {
     const ans = (state.goalLog[t] || {})[g.id];
     add({ id: "goal-" + g.id, kind: "goal", goal: g, time: g.time, done: ans !== undefined, answer: ans });
@@ -399,12 +447,12 @@ function tasksFor() {
 function openTaskCount() { return tasksFor().filter(t => t.open).length; }
 
 // ---------- playing a game ----------
-function playGame(clean) {
+function playGame(clean, date = today()) {
   const gameNo = seasonGames().length;            // 0-based index in this season
   const sched = state.schedule[gameNo];
   const opp = teamByAbbr(sched.opp);
   const rand = mulberry32(state.seed + state.season * 100003 + gameNo * 31 + 1);
-  const mine = teamRating(state.roster);
+  const mine = lineupRating(date);
   const homeEdge = sched.home ? 2.5 + state.econ.stadium * STADIUM_HOME_EDGE : -2.5;
   const moraleEdge = (state.econ.morale - 50) / 10;   // +-5 points at the extremes
   let margin = Math.round(mine - opp.srs + homeEdge + moraleEdge + gauss(rand) * 12);
@@ -414,8 +462,8 @@ function playGame(clean) {
   const myPts = oppPts + margin;
 
   // Split the Sonics' points among the rotation, weighted by how much each player scored last season.
-  const rot = rotation(state.roster);
-  const weights = rot.map((p, i) => (p.pts + 1) * ROTATION_MINUTES[i] * (0.6 + rand() * 0.8));
+  const rot = gameRotation();
+  const weights = rot.map((p, i) => (p.pts + 1) * ROTATION_MINUTES[i] * (0.6 + rand() * 0.8) * (1 + formAdj(p, date) * 0.15));
   const total = weights.reduce((a, b) => a + b, 0);
   const box = rot.map((p, i) => ({ name: p.name, pts: Math.round(myPts * weights[i] / total) }))
     .sort((a, b) => b.pts - a.pts);
@@ -440,7 +488,7 @@ function checkIn(clean, date = today()) {
     save();
     return;
   }
-  const game = playGame(clean);
+  const game = playGame(clean, date);
   state.log.push({ date, clean, game });
   state.log.sort((a, b) => a.date < b.date ? -1 : 1);
   if (clean) addPending({ cap: REWARD.cleanNightCap }, `Clean check-in (game ${game.no})`, date);
@@ -713,6 +761,8 @@ function reportBody() {
     const goals = state.profile.goals;
     if (goals.length) lines.push(`Yesterday's goals: ${goals.filter(g => gl[g.id] === true).length} of ${goals.length} done.`);
   }
+  const fm = dailyForm(today());
+  if (fm.hot) lines.push(`Shootaround: 🔥 ${fm.hot} looks hot. 🥶 ${fm.cold} looks cold.`);
   lines.push(`Media availability at ${fmtTime(state.profile.times.interview)}.`);
   lines.push(`Tonight: ${next.home ? "home vs" : "away @"} the ${opp.name} (${opp.w}–${opp.l} last season).`);
   return lines.map(l => `<p style="margin:0 0 6px">${esc(l)}</p>`).join("");
@@ -1143,6 +1193,46 @@ function wireFreeAgency() {
   });
 }
 
+// ---------- lineup task ----------
+let draftLineup = null;
+function lineupCard(task) {
+  if (task.locked) return taskRow("🔒", `Set tonight's lineup · ${fmtTime(task.time)}`, "locked");
+  if (task.done) return taskRow("✅", `Lineup set: ${starterNames().map(n => esc(n.split(" ").slice(-1)[0])).join(", ")}`);
+  if (!draftLineup) draftLineup = starterNames().slice();
+  const fm = dailyForm(today());
+  const rows = state.roster.slice().sort((a, b) => playerRating(b) - playerRating(a)).map(p => {
+    const on = draftLineup.includes(p.name);
+    const tag = p.name === fm.hot ? " 🔥" : p.name === fm.cold ? " 🥶" : "";
+    return `<button class="pick lu ${on ? "on" : ""}" data-start="${esc(p.name)}">${esc(p.name)}${tag}<span>${p.pos} · ${p.pts.toFixed(1)} ppg</span></button>`;
+  }).join("");
+  const pen = draftLineup.length === 5 ? balancePenalty(draftLineup) : 0;
+  return `<div class="card task"><h2>🏀 Set tonight's lineup</h2>
+    <p style="margin-top:0" class="muted">Tap 5 starters (${draftLineup.length}/5). 🔥 plays better tonight, 🥶 plays worse. Start at least one guard and one big (PF/C).</p>
+    ${pen ? `<p class="warn">⚠️ ${draftLineup.map(n => state.roster.find(p => p.name === n)).some(isGuard) ? "No big man" : "No guard"} in this lineup: it'll cost you tonight.</p>` : ""}
+    <div class="lineup">${rows}</div>
+    <div class="row" style="margin-top:10px">
+      <button class="ghost yes" id="luSave" ${draftLineup.length === 5 ? "" : "disabled"}>Lock it in</button>
+      <button class="ghost" id="luAuto">Let the coach pick</button>
+    </div></div>`;
+}
+function wireLineup() {
+  document.querySelectorAll("[data-start]").forEach(b => b.onclick = () => {
+    const n = b.dataset.start;
+    if (draftLineup.includes(n)) draftLineup = draftLineup.filter(x => x !== n);
+    else if (draftLineup.length < 5) draftLineup.push(n);
+    render();
+  });
+  const save_ = (names, note) => {
+    state.lineup = names; state.lineupSet[today()] = true; draftLineup = null;
+    const msg = award({ morale: 1 }, note);
+    save(); render(); toast(msg);
+  };
+  const s = document.getElementById("luSave");
+  if (s) s.onclick = () => save_(draftLineup.slice(), "Set the lineup");
+  const a = document.getElementById("luAuto");
+  if (a) a.onclick = () => save_(autoStarters(), "Let the coach set the lineup");
+}
+
 function taskRow(icon, text, cls = "") { return `<div class="task-row ${cls}">${icon} ${text}</div>`; }
 
 function taskCard(task) {
@@ -1157,6 +1247,7 @@ function taskCard(task) {
       <button class="ghost yes" id="reportBtn">${owed ? "Collect" : "Got it"}</button></div>`;
   }
   if (task.kind === "interview") return interviewCard(task);
+  if (task.kind === "lineup") return lineupCard(task);
   if (task.kind === "goal") {
     const g = task.goal;
     if (task.locked) return taskRow("🔒", `${esc(g.label)} · ${fmtTime(task.time)}`, "locked");
@@ -1225,6 +1316,7 @@ function renderToday() {
   on("#pickGoalsBtn", () => startWizard(true, 2));
   on("#craveBtn", startCraving);
   on("#goFA", () => { tab = "roster"; render(); });
+  wireLineup();
   on("#reportBtn", () => {
     state.reportsRead[today()] = true;
     const got = collectPending();
@@ -1525,7 +1617,7 @@ document.addEventListener("visibilitychange", () => {
 // For testing only.
 window.__sonics = { get state() { return state; }, teamRating, playerRating, checkIn, render, newState, daysFree, costPerDay,
   tasksFor, openTaskCount, startWizard, makeQuestion, upgradeStadium, award, playGame,
-  capRoom, payroll, deadMoney, appeal, priceFor, signFA, availableFAs, get locked() { return locked; },
+  capRoom, payroll, deadMoney, appeal, priceFor, signFA, availableFAs, dailyForm, lineupRating, starterNames, get locked() { return locked; },
   reset() { state = null; try { localStorage.removeItem(KEY); } catch (e) {} } };
 </script>
 </body>

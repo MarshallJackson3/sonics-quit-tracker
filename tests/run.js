@@ -65,12 +65,36 @@ function check(name, ok, detail = "") {
   // Day 1 (Oct 22). At 8 AM only the morning report is open.
   await setDay(1, 8);
   await page.evaluate(() => window.__sonics.render());
-  check("8 AM: one open task", await page.evaluate(() => window.__sonics.openTaskCount()) === 1);
-  check("8 AM: today badge shows 1", (await page.textContent("#todayBadge")) === "1");
+  check("8 AM: report and lineup open", await page.evaluate(() => window.__sonics.openTaskCount()) === 2);
+  check("8 AM: today badge shows 2", (await page.textContent("#todayBadge")) === "2");
+  check("report names the hot and cold players", (await page.textContent(".task")).includes("🔥"));
   check("check-in locked until evening", (await page.$("[data-clean]")) === null);
   check("morning report says day 1", (await page.textContent(".task")).includes("Day 1"));
   await page.click("#reportBtn");
   check("reading the report: +1 morale", (await S()).econ.morale === 51);
+
+  // Lineup: pick 5 guards (no big) -> warning; fix it; lock in.
+  const guards = await page.evaluate(() => window.__sonics.state.roster.filter(p => /G/.test(p.pos) && !/C|PF/.test(p.pos)).map(p => p.name));
+  const bigMan = await page.evaluate(() => window.__sonics.state.roster.find(p => /C/.test(p.pos)).name);
+  for (const n of await page.evaluate(() => window.__sonics.starterNames())) await page.click(`[data-start="${n}"]`);
+  check("lineup can be cleared", await page.isDisabled("#luSave"));
+  for (const n of guards.slice(0, 5)) await page.click(`[data-start="${n}"]`);
+  check("no big man warning", (await page.textContent(".warn")).includes("No big man"));
+  await page.click(`[data-start="${guards[4]}"]`);
+  await page.click(`[data-start="${bigMan}"]`);
+  check("warning gone with a big", (await page.$(".warn")) === null);
+  await page.click("#luSave");
+  s = await S();
+  check("lineup saved", s.lineup.length === 5 && s.lineup.includes(bigMan) && s.lineupSet["2026-10-22"] && s.econ.morale === 52);
+  check("starters play first", await page.evaluate(b => window.__sonics.starterNames().includes(b), bigMan));
+  const lr = await page.evaluate(() => {
+    const S_ = window.__sonics, d = "2026-10-22", f = S_.dailyForm(d), st = S_.state, keep = st.lineup;
+    const others = st.roster.filter(p => p.name !== f.hot && p.name !== f.cold).map(p => p.name);
+    st.lineup = [f.hot].concat(others.slice(0, 4)); const withHot = S_.lineupRating(d);
+    st.lineup = [f.cold].concat(others.slice(0, 4)); const withCold = S_.lineupRating(d);
+    st.lineup = keep; return withHot - withCold;
+  });
+  check("starting the hot player beats starting the cold one", lr > 0.5, lr.toFixed(2));
   await setDay(1, 21);
   await page.evaluate(() => window.__sonics.render());
   check("9 PM: four open tasks", await page.evaluate(() => window.__sonics.openTaskCount()) === 4);
@@ -82,7 +106,7 @@ function check(name, ok, detail = "") {
   s = await S();
   check("interview answer saved to journal", s.journal.length === 1 && s.journal[0].a.includes("done with pouches") && s.journal[0].day === 1);
   check("interview pays revenue, morale and first sponsor",
-    s.econ.revenue === 0.75 && s.econ.deals.length === 1 && s.econ.morale === 51 + 2, JSON.stringify([s.econ.revenue, s.econ.morale]));
+    s.econ.revenue === 0.75 && s.econ.deals.length === 1 && s.econ.morale === 52 + 2, JSON.stringify([s.econ.revenue, s.econ.morale]));
   check("interview makes a news item", s.news.some(n => n.type === "PRESSER" && n.text.includes("President Marshall")));
   await page.click("[data-goal-yes=workout]");
   await page.click("[data-goal-no=skill]");
@@ -92,7 +116,7 @@ function check(name, ok, detail = "") {
   await page.waitForSelector(".final");
   s = await S();
   check("clean check-in: cap space waits for the morning", s.econ.cap === 0 && s.econ.pending.length === 1 && s.econ.pending[0].cap === 0.5);
-  check("morale settles overnight toward 50", s.econ.morale === 56 + Math.round((50 - 56) * 0.3), String(s.econ.morale));
+  check("morale settles overnight toward 50", s.econ.morale === 57 + Math.round((50 - 57) * 0.3), String(s.econ.morale));
   check("check-in plays game 1", s.log.length === 1 && s.log[0].game.no === 1 && s.log[0].date === "2026-10-22");
   check("streak is 1", (await page.textContent("#streak")) === "1");
   check("all tasks done", (await page.textContent("main")).includes("All done for today"));
