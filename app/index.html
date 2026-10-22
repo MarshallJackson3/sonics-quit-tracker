@@ -84,6 +84,7 @@ nav button .i { display: block; font-size: 20px; }
 .suspense { text-align: center; padding: 30px 0; font-weight: 700; color: var(--gold); }
 textarea { width: 100%; min-height: 90px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 8px; font: 12px monospace; }
 .hidden { display: none; }
+.breaking { background: var(--loss); color: #fff; border-radius: 10px; padding: 10px; margin: 0 0 8px; font-weight: 700; }
 .lineup { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .pick.lu { text-align: left; padding: 8px 10px; font-size: 14px; }
 .pick.lu span { display: block; font-size: 11px; opacity: .75; font-weight: 400; }
@@ -300,6 +301,7 @@ function migrate(s) {
   if (!s.econ) s.econ = newEcon();
   if (!s.phase) s.phase = "season";
   if (!s.lineupSet) s.lineupSet = {};
+  if (!s.moves) s.moves = newMoves();
   if (s.deadStart === undefined) {
     // Saves from before contracts: give the Day-1 players their real salaries and contract lengths.
     s.roster.forEach(p => {
@@ -334,6 +336,7 @@ function newState(profile, habit) {
     phase: "season",  // "season" or "offseason"
     lineup: null,     // names of the 5 starters (null = coach picks)
     lineupSet: {},    // {date: true}
+    moves: newMoves(),
     deadStart: DATA.day1.cap - DATA.day1.roster.reduce((a, p) => a + p.salary, 0),
   };
   s.schedule = makeSchedule(seed, 1);
@@ -452,9 +455,9 @@ function playGame(clean, date = today()) {
   const sched = state.schedule[gameNo];
   const opp = teamByAbbr(sched.opp);
   const rand = mulberry32(state.seed + state.season * 100003 + gameNo * 31 + 1);
-  const mine = lineupRating(date);
+  const mine = lineupRating(date) + coachBonus();
   const homeEdge = sched.home ? 2.5 + state.econ.stadium * STADIUM_HOME_EDGE : -2.5;
-  const moraleEdge = (state.econ.morale - 50) / 10;   // +-5 points at the extremes
+  const moraleEdge = (state.econ.morale - 50) / 15;   // about +-3 points at the extremes
   let margin = Math.round(mine - opp.srs + homeEdge + moraleEdge + gauss(rand) * 12);
   if (margin === 0) margin = rand() < 0.5 ? 1 : -1;  // no ties in basketball
   if (!clean && margin > 0) margin = -(1 + Math.floor(rand() * 12));  // slip day: the Sonics lose
@@ -489,8 +492,9 @@ function checkIn(clean, date = today()) {
     return;
   }
   const game = playGame(clean, date);
-  state.log.push({ date, clean, game });
+  state.log.push({ date, clean, game, coach: state.coach.name });
   state.log.sort((a, b) => a.date < b.date ? -1 : 1);
+  if (clean) frontOfficeMoves(date);
   if (clean) addPending({ cap: REWARD.cleanNightCap }, `Clean check-in (game ${game.no})`, date);
   else award({ morale: REWARD.slipMorale }, "Slip day", date);
   if (game.result === "W") award({ revenue: REWARD.winRevenue }, `Ticket sales (win, game ${game.no})`, date);
@@ -743,11 +747,12 @@ function statusCard() {
 function reportBody() {
   const t = today(), y = addDays(t, -1), n = dayNumber(t);
   const lines = [];
+  const breaking = breakingNews().map(b => `<p class="breaking">${esc(b.text)}</p>`).join("");
   if (state.phase === "offseason") {
     lines.push(`Day ${n}. Offseason, day ${state.offseasonDays + 1} of ${OFFSEASON_DAYS}.`);
     lines.push(`Free agency is open: ${fmtM(Math.max(0, capRoom()))} of cap room. Check the Team tab before other teams sign the best players.`);
     lines.push(`Media availability at ${fmtTime(state.profile.times.interview)}.`);
-    return lines.map(l => `<p style="margin:0 0 6px">${esc(l)}</p>`).join("");
+    return breaking + lines.map(l => `<p style="margin:0 0 6px">${esc(l)}</p>`).join("");
   }
   const next = state.schedule[seasonGames().length];
   const opp = teamByAbbr(next.opp);
@@ -765,7 +770,7 @@ function reportBody() {
   if (fm.hot) lines.push(`Shootaround: 🔥 ${fm.hot} looks hot. 🥶 ${fm.cold} looks cold.`);
   lines.push(`Media availability at ${fmtTime(state.profile.times.interview)}.`);
   lines.push(`Tonight: ${next.home ? "home vs" : "away @"} the ${opp.name} (${opp.w}–${opp.l} last season).`);
-  return lines.map(l => `<p style="margin:0 0 6px">${esc(l)}</p>`).join("");
+  return breaking + lines.map(l => `<p style="margin:0 0 6px">${esc(l)}</p>`).join("");
 }
 
 // ---------- media interviews (the journal) ----------
@@ -906,7 +911,7 @@ function renderJournal() {
 // ---------- rewards: morale, cap space, revenue, endorsements, stadium ----------
 // All game money (in millions), not real NBA numbers. Brands are made up.
 const REWARD = {
-  cleanNightCap: 0.5,     // cap space for a clean nightly check-in, paid next morning
+  cleanNightCap: 0.3,     // cap space for a clean nightly check-in, paid next morning
   winRevenue: 0.25,       // ticket sales from a win
   interviewRevenue: 0.25,
   interviewMorale: 2,
@@ -1067,7 +1072,10 @@ function appeal() {
   const e = state.econ;
   return Math.round(winPct * 50 + (e.morale - 50) * 0.4 + e.stadium * 6 + Math.min(10, e.revenue / 3) + e.deals.length);
 }
-function appealNeeded(ask) { return ask >= 30 ? 40 : ask >= 15 ? 30 : ask >= 8 ? 20 : 0; }
+// Appeal a player wants before he signs at his asking price. Up to 10 below that, he wants 30% more;
+// further below, he won't sign at all.
+function appealNeeded(ask) { return ask >= 40 ? 62 : ask >= 25 ? 50 : ask >= 12 ? 38 : ask >= 6 ? 24 : 0; }
+function interested(fa) { return appeal() >= appealNeeded(fa.ask) - 10; }
 function priceFor(fa) {
   if (appeal() >= appealNeeded(fa.ask)) return fa.ask;
   return Math.min(DATA.fa.maxSalary, Math.round(fa.ask * OVERPAY * 100) / 100);  // never more than the real max contract
@@ -1092,7 +1100,7 @@ function startOffseason(date) {
   state.roster.forEach(p => { if (!extended.includes(p)) p.years -= 1; });
   state.phase = "offseason";
   state.offseasonDays = 0;
-  state.faGone = [];
+  state.faGone = state.faGone || [];   // players other teams signed stay gone in later offseasons
 }
 
 function startNextSeason(date) {
@@ -1105,9 +1113,9 @@ function startNextSeason(date) {
 // Each offseason day, other teams sign some of the best free agents left.
 function othersSign(date) {
   const rand = mulberry32(state.seed + hashStr(date));
-  const left = availableFAs().slice(0, 60);
+  const left = availableFAs().slice(0, 80);
   left.forEach(p => {
-    if (rand() < 0.08) {
+    if (rand() < 0.08 + p.ask / 100) {   // stars get snapped up fastest
       state.faGone.push(p.id);
       state.news.push({ date, type: "FA", text: `${p.name} signed with another team.` });
     }
@@ -1124,6 +1132,7 @@ function signFA(id, years) {
   const fa = DATA.fa.players.find(p => p.id === id);
   if (!fa || state.phase !== "offseason") return "Free agency is closed.";
   if (state.roster.length >= MAX_ROSTER) return `Your roster is full (${MAX_ROSTER}).`;
+  if (!interested(fa)) return `${fa.name} isn't interested in the Sonics yet. Win more and build team appeal.`;
   const price = priceFor(fa);
   if (price > capRoom() && price > MIN_DEAL + 0.01) return `Not enough cap room: you have ${fmtM(Math.max(0, capRoom()))}.`;
   state.roster.push({ id: fa.id, name: fa.name, pos: fa.pos, g: fa.g, mp: fa.mp, pts: fa.pts, bpm: fa.bpm, vorp: fa.vorp,
@@ -1160,16 +1169,16 @@ function freeAgencyCard() {
   const ap = appeal();
   return `<div class="card fa"><h2>Free agency · ${left} day${left === 1 ? "" : "s"} left</h2>
     <p style="margin-top:0">Cap room: <b class="W">${fmtM(Math.max(0, capRoom()))}</b> · Roster ${state.roster.length}/${MAX_ROSTER} · Team appeal <b>${ap}</b></p>
-    <p class="muted">Better players want an appealing team (winning, morale, stadium, sponsors). If yours isn't there yet, they'll ask for ${Math.round((OVERPAY - 1) * 100)}% more. Minimum deals (${fmtM(MIN_DEAL)}) can be signed even with no cap room. Other teams sign players every day.</p>
+    <p class="muted">Better players want an appealing team (winning, morale, stadium, sponsors). A little short and they'll ask for ${Math.round((OVERPAY - 1) * 100)}% more; well short and they won't sign. Minimum deals (${fmtM(MIN_DEAL)}) can be signed even with no cap room. Other teams sign players every day.</p>
     <div class="picks" style="margin-bottom:8px">${["All", "PG", "SG", "SF", "PF", "C"].map(p => `<button class="pick ${faFilter.pos === p ? "on" : ""}" data-fapos="${p}">${p}</button>`).join("")}</div>
     <input id="faSearch" class="search" placeholder="Search by name" value="${esc(faFilter.q)}">
     <table class="fatable"><thead><tr><th>Player</th><th class="n">PTS</th><th class="n">Asks</th><th></th></tr></thead><tbody>
     ${list.map(p => {
-      const price = priceFor(p), wants = price > p.ask;
-      const afford = price <= capRoom() || price <= MIN_DEAL + 0.01;
+      const price = priceFor(p), wants = price > p.ask, keen = interested(p);
+      const afford = keen && (price <= capRoom() || price <= MIN_DEAL + 0.01);
       return `<tr><td><b>${esc(p.name)}</b><br><span class="muted">${p.pos} · ${p.age} · BPM ${p.bpm.toFixed(1)}${p.option ? " · " + p.option : ""}</span></td>
         <td class="n">${p.pts.toFixed(1)}</td>
-        <td class="n">${fmtM(price)}${wants ? `<br><span class="muted">wants a winner</span>` : ""}</td>
+        <td class="n">${keen ? fmtM(price) : "—"}${!keen ? `<br><span class="muted">not interested</span>` : wants ? `<br><span class="muted">wants a winner</span>` : ""}</td>
         <td class="n"><button class="ghost sm" data-offer="${p.id}" ${afford && state.roster.length < MAX_ROSTER ? "" : "disabled"}>Sign</button></td></tr>`;
     }).join("")}
     </tbody></table>
@@ -1198,6 +1207,7 @@ let draftLineup = null;
 function lineupCard(task) {
   if (task.locked) return taskRow("🔒", `Set tonight's lineup · ${fmtTime(task.time)}`, "locked");
   if (task.done) return taskRow("✅", `Lineup set: ${starterNames().map(n => esc(n.split(" ").slice(-1)[0])).join(", ")}`);
+  if (draftLineup) draftLineup = draftLineup.filter(n => state.roster.some(p => p.name === n));
   if (!draftLineup) draftLineup = starterNames().slice();
   const fm = dailyForm(today());
   const rows = state.roster.slice().sort((a, b) => playerRating(b) - playerRating(a)).map(p => {
@@ -1231,6 +1241,98 @@ function wireLineup() {
   if (s) s.onclick = () => save_(draftLineup.slice(), "Set the lineup");
   const a = document.getElementById("luAuto");
   if (a) a.onclick = () => save_(autoStarters(), "Let the coach set the lineup");
+}
+
+// ---------- surprise front-office moves: trades, coach and GM changes ----------
+// Hidden schedule, by total clean days. Real people and real contracts; the moves themselves are what-if.
+const COACH_CHANGES = [{ at: 25, tier: 1 }, { at: 110, tier: 2 }, { at: 230, tier: 3 }];
+const GM_CHANGES = [{ at: 45, tier: 1 }, { at: 180, tier: 2 }];
+const TRADE_EVERY = [16, 13, 11];    // clean days between trades, by GM tier (0 = Nico Harrison)
+const TRADE_STEP = [0.5, 0.8, 1.0];  // how much better (rating points) the incoming player can be, by GM tier
+const FIRST_TRADE = 10;
+
+function newMoves() { return { coachStage: 0, gmStage: 0, gmTier: 0, nextTrade: FIRST_TRADE, tradedAway: [], usedCoaches: [] }; }
+function coachPct(c) {
+  if (c.pct !== undefined) return c.pct;
+  const m = /(\d+)-(\d+)/.exec(c.record || "");
+  return m ? +m[1] / (+m[1] + +m[2]) : 0.25;
+}
+// A better coach adds points to every game (Stephen Silas, .250, = 0).
+function coachBonus() { return (coachPct(state.coach) - 0.25) * 4; }
+// Each change happens a few days early or late, so it's never exactly predictable.
+function jitter(key) { return Math.floor(mulberry32(state.seed + hashStr(key))() * 9) - 4; }
+
+function frontOfficeMoves(date) {
+  const mv = state.moves, clean = cleanDays();
+  const gmNext = GM_CHANGES[mv.gmStage];
+  if (gmNext && clean >= gmNext.at + jitter("gm" + mv.gmStage)) { changeGM(gmNext.tier, date); mv.gmStage++; }
+  const coachNext = COACH_CHANGES[mv.coachStage];
+  if (coachNext && clean >= coachNext.at + jitter("coach" + mv.coachStage)) { changeCoach(coachNext.tier, date); mv.coachStage++; }
+  if (clean >= mv.nextTrade) {
+    const ok = makeTrade(date);
+    const every = TRADE_EVERY[mv.gmTier] - (state.econ.morale >= 70 ? 2 : 0);
+    mv.nextTrade = clean + (ok ? every : 2);
+  }
+}
+
+function pickSeeded(list, key) {
+  return list[Math.floor(mulberry32(state.seed + hashStr(key))() * list.length)];
+}
+
+function changeCoach(tier, date) {
+  const options = DATA.staff.coaches.filter(c => c.tier === tier && !state.moves.usedCoaches.includes(c.name));
+  if (!options.length) return;
+  const c = pickSeeded(options, "coachpick" + tier);
+  const old = state.coach;
+  const games = state.log.filter(e => e.game && e.coach === old.name).map(e => e.game);
+  const r = record(games);
+  state.news.push({ date, type: "FIRED", text: `🚨 Sonics fire head coach ${old.name} (${r.w}–${r.l} in Seattle). (What-if.)` });
+  state.coach = { name: c.name, record: `${c.record}, ${c.years}`, pct: c.pct };
+  state.moves.usedCoaches.push(c.name);
+  state.news.push({ date, type: "HIRED", text: `🚨 Sonics hire ${c.name} as head coach. Career record: ${c.record}. (What-if.)` });
+  award({ morale: 5 }, `New head coach: ${c.name}`, date);
+}
+
+function changeGM(tier, date) {
+  const options = DATA.staff.gms.filter(g => g.tier === tier);
+  if (!options.length) return;
+  const g = pickSeeded(options, "gmpick" + tier);
+  state.news.push({ date, type: "FIRED", text: `🚨 Sonics part ways with general manager ${state.gm.name}. (What-if.)` });
+  state.gm = { name: g.name, fact: g.fact };
+  state.moves.gmTier = tier;
+  state.news.push({ date, type: "HIRED", text: `🚨 Sonics hire ${g.name} as general manager. ${g.fact} (What-if.)` });
+  award({ morale: 3 }, `New GM: ${g.name}`, date);
+}
+
+// Trade the worst Sonics player for a slightly better real player with a salary that fits.
+function makeTrade(date) {
+  if (state.roster.length < 2) return false;
+  const out = state.roster.slice().sort((a, b) => playerRating(a) - playerRating(b))[0];
+  const rOut = playerRating(out);
+  const room = Math.max(0, capRoom()) * 0.25;              // the GM only spends a quarter of your cap room in trades
+  const maxSalary = out.salary * 1.25 + 0.1 + room;
+  const onTeam = new Set(state.roster.map(p => p.id || p.name));
+  const pool = DATA.league.players.filter(p => !onTeam.has(p.id) && !state.moves.tradedAway.includes(p.name) && p.salary <= maxSalary);
+  const step = TRADE_STEP[state.moves.gmTier];
+  let cands = pool.filter(p => playerRating(p) >= rOut + 0.3 && playerRating(p) <= rOut + step);
+  if (!cands.length) cands = pool.filter(p => playerRating(p) > rOut + 0.05 && playerRating(p) <= rOut + step + 1);
+  if (!cands.length) return false;
+  cands.sort((a, b) => playerRating(b) - playerRating(a));
+  const inc = pickSeeded(cands.slice(0, 8), "trade" + date);
+  state.roster = state.roster.filter(p => p !== out);
+  state.roster.push({ id: inc.id, name: inc.name, pos: inc.pos, g: inc.g, mp: inc.mp, pts: inc.pts, bpm: inc.bpm, vorp: inc.vorp,
+    salary: inc.salary, years: inc.years, acquired: date });
+  state.moves.tradedAway.push(out.name);
+  if (state.lineup) state.lineup = state.lineup.filter(n => n !== out.name);
+  const team = teamByAbbr(inc.team);
+  state.news.push({ date, type: "TRADE", text: `🚨 TRADE: Sonics send ${out.name} to the ${team ? team.name : inc.team} for ${inc.name} (${inc.pos}, ${inc.pts.toFixed(1)} ppg last season, ${fmtM(inc.salary)}). (What-if.)` });
+  return true;
+}
+
+// Big news since yesterday, for the morning report.
+function breakingNews() {
+  const t = today(), y = addDays(t, -1);
+  return state.news.filter(n => (n.date === y || n.date === t) && ["TRADE", "FIRED", "HIRED"].includes(n.type));
 }
 
 function taskRow(icon, text, cls = "") { return `<div class="task-row ${cls}">${icon} ${text}</div>`; }
@@ -1514,8 +1616,9 @@ function renderRoster() {
     <td class="n">${p.pts.toFixed(1)}</td><td class="n">${p.vorp.toFixed(1)}</td></tr>`).join("");
   main.innerHTML = (state.phase === "offseason" ? freeAgencyCard() : "") + frontOfficeCard() + contractsCard() + `
     <div class="card"><h2>Staff</h2>
-      <p style="margin:0">Head coach: <b>${esc(state.coach.name)}</b> <span class="muted">(${esc(state.coach.record)})</span></p>
-      <p style="margin:6px 0 0">General manager: <b>${esc(state.gm.name)}</b></p>
+      <p style="margin:0">Head coach: <b>${esc(state.coach.name)}</b> <span class="muted">(career ${esc(state.coach.record)})</span></p>
+      <p style="margin:6px 0 0">General manager: <b>${esc(state.gm.name)}</b> <span class="muted">${esc(state.gm.fact || "")}</span></p>
+      <p class="muted" style="margin:8px 0 0">The front office makes moves on its own as your clean days add up. Trades and hires use real people; the moves are what-if.</p>
     </div>
     <div class="card"><h2>Roster (${state.roster.length})</h2>
       <table><thead><tr><th>Player · salary · years left</th><th class="n">PTS</th><th class="n">VORP</th></tr></thead>
@@ -1572,8 +1675,10 @@ function renderMore() {
     <div class="card"><h2>About the data</h2>
       <p style="margin-top:0" class="muted">Players, stats, coaches and GMs are real as of ${esc(DATA.day1.snapshotDate)}.
       Games are simulated: a team's strength comes from its players' real 2025-26 Box Plus/Minus, and opponents use their real 2025-26 SRS.
-      Seattle doesn't have an NBA team yet; the NBA was only exploring expansion as of October 2026.</p>
-      <ul class="muted">${DATA.day1.sources.concat(DATA.teamsSource).map(u => `<li><a href="${esc(u)}" target="_blank" rel="noopener">${esc(u.replace(/^https:\/\/(www\.)?/, ""))}</a></li>`).join("")}</ul>
+      Seattle doesn't have an NBA team yet; the NBA was only exploring expansion as of October 2026.
+      Salaries and the $164.961M cap are real; dead money, earned cap space and asking prices are game rules.
+      Trades, signings and coach/GM hires use real people and real contracts, but the moves themselves are what-if.</p>
+      <ul class="muted">${DATA.day1.sources.concat(DATA.teamsSource, DATA.fa.sources, DATA.staff.sources, DATA.staff.gms.map(g => g.source)).map(u => `<li><a href="${esc(u)}" target="_blank" rel="noopener">${esc(u.replace(/^https:\/\/(www\.)?/, ""))}</a></li>`).join("")}</ul>
     </div>`;
   document.getElementById("editPlan").onclick = () => startWizard(true);
   document.getElementById("lockBtn").onclick = () => state.lock ? removePasscode() : setPasscode();
@@ -1617,7 +1722,8 @@ document.addEventListener("visibilitychange", () => {
 // For testing only.
 window.__sonics = { get state() { return state; }, teamRating, playerRating, checkIn, render, newState, daysFree, costPerDay,
   tasksFor, openTaskCount, startWizard, makeQuestion, upgradeStadium, award, playGame,
-  capRoom, payroll, deadMoney, appeal, priceFor, signFA, availableFAs, dailyForm, lineupRating, starterNames, get locked() { return locked; },
+  capRoom, payroll, deadMoney, appeal, priceFor, signFA, availableFAs, interested, dailyForm, lineupRating, starterNames,
+  coachBonus, makeTrade, breakingNews, get locked() { return locked; },
   reset() { state = null; try { localStorage.removeItem(KEY); } catch (e) {} } };
 </script>
 </body>

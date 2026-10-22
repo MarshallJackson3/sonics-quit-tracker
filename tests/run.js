@@ -60,6 +60,8 @@ function check(name, ok, detail = "") {
   check("profile saved", s.profile.name === "Marshall" && s.profile.main === "nicotine" && s.profile.goals.length === 2);
   check("custom skill saved", s.profile.goals[1].label === "Real estate exam" && s.profile.goals[1].question.includes("real estate"));
   check("goal times default to 10 AM and 4 PM", s.profile.goals[0].time === "10:00" && s.profile.goals[1].time === "16:00");
+  // Surprise moves are tested on their own below; keep this season's roster fixed.
+  await page.evaluate(() => { const m = window.__sonics.state.moves; m.nextTrade = 1e9; m.coachStage = 99; m.gmStage = 99; });
   check("no tasks before day 1", (await page.$(".tasks-head")) === null && (await page.textContent("main")).includes("Day 1 is"));
 
   // Day 1 (Oct 22). At 8 AM only the morning report is open.
@@ -115,7 +117,7 @@ function check(name, ok, detail = "") {
   await page.click("[data-clean]");
   await page.waitForSelector(".final");
   s = await S();
-  check("clean check-in: cap space waits for the morning", s.econ.cap === 0 && s.econ.pending.length === 1 && s.econ.pending[0].cap === 0.5);
+  check("clean check-in: cap space waits for the morning", s.econ.cap === 0 && s.econ.pending.length === 1 && s.econ.pending[0].cap === 0.3);
   check("morale settles overnight toward 50", s.econ.morale === 57 + Math.round((50 - 57) * 0.3), String(s.econ.morale));
   check("check-in plays game 1", s.log.length === 1 && s.log[0].game.no === 1 && s.log[0].date === "2026-10-22");
   check("streak is 1", (await page.textContent("#streak")) === "1");
@@ -124,11 +126,11 @@ function check(name, ok, detail = "") {
   // Day 2 morning: collect the cap space.
   await setDay(2, 8);
   await page.evaluate(() => window.__sonics.render());
-  check("morning report offers the payout", (await page.textContent(".payout")).includes("$0.5M"));
+  check("morning report offers the payout", (await page.textContent(".payout")).includes("$0.3M"));
   await page.click("#reportBtn");
   s = await S();
-  check("collecting pays cap space", s.econ.cap === 0.5 && s.econ.pending.length === 0);
-  check("Today shows morale and cap", (await page.textContent(".econ-line")).includes("$0.5M"));
+  check("collecting pays cap space", s.econ.cap === 0.3 && s.econ.pending.length === 0);
+  check("Today shows morale and cap", (await page.textContent(".econ-line")).includes("$0.3M"));
 
   // Day 2: a slip. The Sonics lose, the streak resets, the team stays.
   await setDay(2);
@@ -179,13 +181,30 @@ function check(name, ok, detail = "") {
   await page.click("#goFA");
   check("free agency list on Team tab", (await page.$$("[data-offer]")).length > 10);
   const fa = await page.evaluate(() => {
-    const top = window.__sonics.availableFAs()[0];
-    return { ask: top.ask, price: window.__sonics.priceFor(top), appeal: window.__sonics.appeal() };
+    const S_ = window.__sonics, top = S_.availableFAs()[0];
+    const mid = S_.availableFAs().find(p => S_.interested(p) && S_.priceFor(p) > p.ask);
+    return { topInterested: S_.interested(top), topErr: S_.signFA(top.id, 2), appeal: S_.appeal(),
+      mid: mid && { ask: mid.ask, price: S_.priceFor(mid) } };
   });
-  check("a bad team pays 30% more for top free agents (up to the max contract)",
-    Math.abs(fa.price - Math.min(57.736, Math.round(fa.ask * 1.3 * 100) / 100)) < 0.01, JSON.stringify(fa));
+  check("stars won't sign with a bad team", !fa.topInterested && /isn't interested/.test(fa.topErr), JSON.stringify(fa));
+  const rule = await page.evaluate(() => {
+    const S_ = window.__sonics, ap = S_.appeal(), bad = [];
+    for (const ask of [3, 7, 13, 26, 41]) {
+      const need = ask >= 40 ? 62 : ask >= 25 ? 50 : ask >= 12 ? 38 : ask >= 6 ? 24 : 0, f = { ask };
+      const ok = ap >= need ? S_.priceFor(f) === ask
+        : ap >= need - 10 ? S_.interested(f) && Math.abs(S_.priceFor(f) - Math.min(57.736, Math.round(ask * 1.3 * 100) / 100)) < 0.01
+        : !S_.interested(f);
+      if (!ok) bad.push(ask);
+    }
+    return { ap, bad };
+  });
+  check("appeal rule: full price / 30% more / not interested", rule.bad.length === 0, JSON.stringify(rule));
   check("no asking price above the max contract", await page.evaluate(() => window.__sonics.availableFAs().every(p => window.__sonics.priceFor(p) <= 57.74)));
-  const tooMuch = await page.evaluate(() => window.__sonics.signFA(window.__sonics.availableFAs()[0].id, 2));
+  const tooMuch = await page.evaluate(() => {
+    const S_ = window.__sonics, e = S_.state.econ, p = S_.availableFAs().find(p => S_.interested(p) && S_.priceFor(p) > 2);
+    const keep = e.cap; e.cap -= S_.capRoom() - S_.priceFor(p) + 1;   // leave just under his price
+    const err = S_.signFA(p.id, 2); e.cap = keep; return err;
+  });
   check("can't sign without cap room", /Not enough cap room/.test(tooMuch || ""), tooMuch);
   const cheap = await page.evaluate(() => window.__sonics.availableFAs().filter(p => window.__sonics.priceFor(p) <= 1.36).pop());
   await page.fill("#faSearch", cheap.name);
@@ -198,8 +217,11 @@ function check(name, ok, detail = "") {
   check("signed player leaves the pool", !(await page.evaluate(id => window.__sonics.availableFAs().some(p => p.id === id), cheap.id)));
   await page.evaluate(() => { window.__sonics.state.econ.cap += 60; });
   const big = await page.evaluate(() => {
-    const p = window.__sonics.availableFAs().find(p => window.__sonics.priceFor(p) > 20 && window.__sonics.priceFor(p) < window.__sonics.capRoom());
-    return { id: p.id, err: window.__sonics.signFA(p.id, 2), price: window.__sonics.priceFor(p) };
+    window.__sonics.state.econ.stadium = 5;   // a dream arena makes the Sonics appealing enough
+    const p = window.__sonics.availableFAs().find(p => window.__sonics.interested(p) && window.__sonics.priceFor(p) > 8 && window.__sonics.priceFor(p) < window.__sonics.capRoom());
+    const r = { id: p.id, err: window.__sonics.signFA(p.id, 2), price: window.__sonics.priceFor(p) };
+    window.__sonics.state.econ.stadium = 0;
+    return r;
   });
   check("with room, a big free agent signs", big.err === null && (await S()).roster.length === 15, JSON.stringify(big));
   // Finish the offseason: 5 more check-ins, then season 2.
@@ -235,7 +257,7 @@ function check(name, ok, detail = "") {
     st.econ.morale = keep;
     return out.map(g => g.my - g.them);
   });
-  check("morale 100 plays 10 points better than morale 0", margins[1] - margins[0] === 10, JSON.stringify(margins));
+  check("morale 100 plays about 7 points better than morale 0", Math.abs(margins[1] - margins[0] - 6.67) <= 1, JSON.stringify(margins));
 
   // Stadium: not enough revenue, then enough.
   await page.evaluate(() => { window.__sonics.state.econ.revenue = 1; });
@@ -335,11 +357,47 @@ function check(name, ok, detail = "") {
   check("passcode can be turned off", !(await S()).lock);
   page.removeAllListeners("dialog");
 
+  // Surprise moves: a trade around 10 clean days, a new coach around 25, a new GM around 45.
+  await fresh();
+  await setDay(0);
+  await signUp();
+  check("Stephen Silas adds nothing", await page.evaluate(() => window.__sonics.coachBonus()) === 0);
+  const moves = await page.evaluate(() => {
+    const out = {};
+    for (let i = 0; i < 50; i++) {
+      window.__fakeNow = () => new Date(2026, 9, 21 + i, 21);
+      window.__sonics.checkIn(true);
+      const st = window.__sonics.state;
+      if (!out.trade && st.news.some(n => n.type === "TRADE")) out.trade = i + 1;
+      if (!out.coach && st.coach.name !== "Stephen Silas") out.coach = i + 1;
+      if (!out.gm && st.gm.name !== "Nico Harrison") out.gm = i + 1;
+    }
+    const st = window.__sonics.state;
+    out.roster = st.roster.length;
+    out.bonus = window.__sonics.coachBonus();
+    out.whatIf = st.news.filter(n => n.date > st.startDate && ["TRADE", "FIRED", "HIRED"].includes(n.type)).every(n => n.text.includes("What-if"));
+    out.salaries = st.roster.every(p => p.salary > 0 && p.years >= 1);
+    return out;
+  });
+  check("first trade around 10 clean days", moves.trade >= 10 && moves.trade <= 11, JSON.stringify(moves));
+  check("coach replaced around 25 clean days, with a better one", moves.coach >= 21 && moves.coach <= 29 && moves.bonus > 0);
+  check("GM replaced around 45 clean days", moves.gm >= 41 && moves.gm <= 49);
+  check("trades keep 18 players with real contracts", moves.roster === 18 && moves.salaries);
+  check("moves are labeled what-if", moves.whatIf);
+  await setDay(50, 8);
+  await page.evaluate(() => {
+    const st = window.__sonics.state;
+    st.news.push({ date: "2026-12-09", type: "TRADE", text: "🚨 TRADE: test. (What-if.)" });
+    window.__sonics.render();
+  });
+  check("morning report shows breaking news", (await page.textContent(".breaking")).includes("TRADE"));
+
   // Too many slips: big expiring contracts get extended.
   await fresh();
   await setDay(0);
   await signUp();
   const ext = await page.evaluate(() => {
+    const m = window.__sonics.state.moves; m.nextTrade = 1e9; m.coachStage = 99; m.gmStage = 99;
     for (let i = 0; i < 82; i++) {
       window.__fakeNow = () => new Date(2026, 9, 21 + i, 21);
       window.__sonics.checkIn(i >= 5);   // 5 slips = 2 over the 3 free ones

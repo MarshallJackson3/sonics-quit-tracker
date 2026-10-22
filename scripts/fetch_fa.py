@@ -102,6 +102,43 @@ def ask_price(r, salary, age):
     return round(min(MAX_SALARY, max(MIN_SALARY, price)), 2)
 
 
+# Basketball-Reference team codes that differ from the ones the app uses.
+TEAM_FIX = {"BRK": "BKN", "CHO": "CHA", "PHO": "PHX"}
+
+
+def write_league(per_game, adv, sonics, fa_ids):
+    """data/league.json: every player under contract for 2026-27 (with 2025-26 stats), for what-if trades."""
+    players = {}
+    for tr, c in rows("contracts.html"):
+        pid = player_id(tr)
+        if not pid or pid in players:
+            continue
+        sal = [money(c.get(f"y{i}", ("", ""))[0]) for i in range(1, 7)]
+        if not sal[0]:
+            continue
+        years = 0
+        for x in sal:
+            if not x:
+                break
+            years += 1
+        s, a = per_game.get(pid), adv.get(pid)
+        if not s or not a or s["name_display"] in sonics:
+            continue
+        team = c.get("team_id", ("", ""))[0]
+        players[pid] = {
+            "id": pid, "name": s["name_display"], "pos": s["pos"], "age": int(num(s["age"])) + 1,
+            "team": TEAM_FIX.get(team, team), "g": int(num(s["games"])), "mp": num(s["mp_per_g"]),
+            "pts": num(s["pts_per_g"]), "bpm": num(a["bpm"]), "vorp": num(a["vorp"]),
+            "salary": round(sal[0], 2), "years": years,
+        }
+    out = {"snapshotDate": time.strftime("%Y-%m-%d"),
+           "note": "Players under contract for 2026-27 (real contracts, 2025-26 stats). Used for what-if trades.",
+           "players": sorted(players.values(), key=lambda p: p["name"])}
+    with open(os.path.join(ROOT, "data", "league.json"), "w", encoding="utf-8") as f:
+        json.dump(out, f, indent=1)
+    print(f"Wrote data/league.json: {len(players)} players")
+
+
 def main():
     if "--fetch" in sys.argv:
         fetch()
@@ -137,6 +174,7 @@ def main():
             "salary": round(y1, 2), "option": option, "ask": ask_price(r, y1, age),
         }
     players = sorted(pool.values(), key=lambda p: -p["ask"])
+    write_league(per_game, adv, sonics, set(pool))
     out = {
         "snapshotDate": time.strftime("%Y-%m-%d"),
         "note": "Projected 2027 free agents: players whose contracts end after 2026-27 or who have a 2027-28 option. "

@@ -47,7 +47,7 @@ Done:
   Answers (typed or iPhone dictation) go to the Journal tab, which also takes free notes. Outlets are made up.
 
 - Rewards (game money, labeled in the app; numbers in REWARD / ENDORSEMENTS / STADIUM in app/index.html):
-  clean night +$0.5M cap space (collected in the next morning report), win +$0.25M revenue, goal yes +3 morale,
+  clean night +$0.3M cap space (collected in the next morning report), win +$0.25M revenue, goal yes +3 morale,
   interview +$0.25M revenue +2 morale + endorsement deals at 1, 3, 7, 14... interviews (made-up brands),
   craving beaten +2 morale +$0.1M cap (3/day max), report +1 morale, slip -8 morale. Morale settles 30% toward
   50 each night. Morale shifts game margin by (morale-50)/10 points; each stadium level adds 0.75 home points.
@@ -65,10 +65,18 @@ Done:
   hot (+2) and one cold (-2) each day (named in the report). No guard or no PF/C in the five = -1.5 each.
   Skipped = coach starts the 5 best-rated.
 
-Next, in order:
+- Surprise moves (in season, by total clean days, +-4 days): coach fired/hired at ~25, ~110, ~230 (better tier each
+  time; data/staff.json from Basketball-Reference records, none a head coach in 2026-27); GM at ~45 and ~180
+  (real executives out of jobs, with news sources). Trades every 16/13/11 clean days by GM tier (2 fewer with
+  morale 70+): worst Sonics player out for a slightly better real player (data/league.json) whose salary fits.
+  Coach adds (career pct - .250) x 4 points a game. All labeled what-if. Don't show the owner the pools.
+- Balance check: `node tests/sim.js` plays a perfect year (clean daily, morale 75, best free agents). Last run:
+  about 20 wins, then ~45, then ~60.
+
+Next:
 - Voice memos for interviews (on hold, owner's call).
-4. Surprise in-season trades and coach/GM hires (hidden from the owner).
-5. Real phone notifications (needs a small free server, e.g. Cloudflare; the owner creates that account).
+- Real phone notifications.
+  (Notifications need a small free server, e.g. Cloudflare; the owner creates that account.)
 
 ## Decisions
 
