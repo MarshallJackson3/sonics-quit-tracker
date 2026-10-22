@@ -177,6 +177,32 @@ function check(name, ok, detail = "") {
   await page.click("#wDone");
   check("picking goals clears the prompt", (await S()).profile.goals.length === 1 && (await page.$("#pickGoalsBtn")) === null);
 
+  // Passcode: set it, get locked out on reopen, wrong code rejected, right code opens, turn it off.
+  const typeCode = async code => { for (const k of code) await page.click(`[data-key="${k}"]`); await page.waitForTimeout(50); };
+  page.on("dialog", d => d.accept());
+  await page.click("nav button[data-tab=more]");
+  await page.click("#lockBtn");
+  await typeCode("1234");
+  await typeCode("9999");
+  check("mismatched passcode is rejected", (await page.textContent("#padMsg")).includes("didn't match"));
+  await typeCode("1234");
+  check("passcode saved (hashed, not the digits)", await page.evaluate(() => {
+    const l = window.__sonics.state.lock; return !!l && !JSON.stringify(l).includes("1234");
+  }));
+  await page.reload();
+  await setDay(86);
+  await page.evaluate(() => window.__sonics.render());
+  check("app opens locked", (await page.textContent(".lock h2")) === "Sonics locked" && await page.isHidden("nav"));
+  await typeCode("0000");
+  check("wrong passcode stays locked", (await page.textContent("#padMsg")).includes("Wrong") && await page.evaluate(() => window.__sonics.locked));
+  await typeCode("1234");
+  check("right passcode unlocks", !(await page.evaluate(() => window.__sonics.locked)) && (await page.$(".tasks-head")) !== null);
+  await page.click("nav button[data-tab=more]");
+  await page.click("#lockBtn");
+  await typeCode("1234");
+  check("passcode can be turned off", !(await S()).lock);
+  page.removeAllListeners("dialog");
+
   // Other main battles.
   await fresh();
   await setDay(0);

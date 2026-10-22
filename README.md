@@ -39,9 +39,11 @@ Done:
 
 - Sign-up story, main battle + up to 2 goals (custom skill name and question), timed daily tasks
   (morning report, goal check-ins, nightly check-in that plays the game), Today badge, catch-up for a missed night.
+- Optional 4-digit passcode (More → Passcode). Locks whenever you leave the app. Stored hashed on the device;
+  a privacy screen, not encryption. A forgotten passcode can't be recovered (erase + restore a backup).
 
 Next, in order:
-1. Media interviews (noon journal prompt) and a Journal tab; typing or iPhone dictation.
+1. Media interviews (noon task, journal prompt) and a Journal tab; typing or iPhone dictation.
 2. Voice memos for interviews.
 3. Morale, cap money, endorsements, stadium; morale affects games; rewards paid next morning.
 4. Lineup, salaries/cap (real salaries + labeled dead money), offseason free agency, surprise trades/hires.

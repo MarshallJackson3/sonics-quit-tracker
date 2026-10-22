@@ -84,6 +84,14 @@ nav button .i { display: block; font-size: 20px; }
 .suspense { text-align: center; padding: 30px 0; font-weight: 700; color: var(--gold); }
 textarea { width: 100%; min-height: 90px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 8px; font: 12px monospace; }
 .hidden { display: none; }
+.lock { text-align: center; }
+.lock .err { color: var(--loss); }
+.dots { display: flex; justify-content: center; gap: 14px; margin: 14px 0 18px; }
+.dots span { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--gold); }
+.dots span.on { background: var(--gold); }
+.pad { display: grid; grid-template-columns: repeat(3, 72px); gap: 12px; justify-content: center; margin-bottom: 12px; }
+.key { height: 72px; border-radius: 50%; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); font-size: 26px; font-weight: 600; }
+.key:active { background: var(--gold); color: #1b1300; }
 .picks { display: flex; flex-wrap: wrap; gap: 8px; }
 .pick { padding: 10px 14px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); }
 .pick.on { background: var(--gold); color: #1b1300; border-color: var(--gold); font-weight: 700; }
@@ -269,6 +277,7 @@ function makeSchedule(seed, season) {
 }
 
 let state = load() || null;
+let locked = !!(state && state.lock);   // a passcode is set: start locked
 
 // ---------- derived numbers ----------
 function seasonGames(s = state) { return s.log.filter(e => e.game && e.game.season === s.season).map(e => e.game); }
@@ -406,6 +415,8 @@ const main = document.getElementById("main");
 
 function render() {
   if (!state) { renderWelcome(); return; }
+  if (locked) { renderLock(); return; }
+  document.getElementById("nav").classList.remove("hidden");
   if (wiz) { renderWizard(); return; }
   const r = record(seasonGames());
   document.getElementById("hdrRec").textContent = `${r.w}–${r.l}`;
@@ -772,6 +783,84 @@ function tipOff(clean, date = today()) {
   }, window.__fast ? 0 : 1400);
 }
 
+// ---------- passcode ----------
+// A privacy screen: the 4-digit code is stored only as a scrambled (hashed) value on this device.
+async function hashCode(code, salt) {
+  const text = salt + ":" + code;
+  if (window.crypto && crypto.subtle) {
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+  }
+  let h = 0; for (const c of text) h = (h * 31 + c.charCodeAt(0)) | 0;  // fallback for old browsers
+  return "x" + h;
+}
+
+// Shows a keypad. onDone(code) gets the 4 digits; return a message to show (and clear), or nothing.
+function keypad(title, sub, onDone, extra = "") {
+  document.getElementById("nav").classList.add("hidden");
+  let code = "";
+  main.innerHTML = `<div class="card lock">
+    <h2>${esc(title)}</h2>
+    <p class="muted" id="padMsg">${esc(sub)}</p>
+    <div class="dots" id="dots"></div>
+    <div class="pad">${[1, 2, 3, 4, 5, 6, 7, 8, 9, "", 0, "⌫"].map(k =>
+      k === "" ? "<span></span>" : `<button class="key" data-key="${k}">${k}</button>`).join("")}</div>
+    ${extra}
+  </div>`;
+  const dots = () => { document.getElementById("dots").innerHTML = [0, 1, 2, 3].map(i => `<span class="${i < code.length ? "on" : ""}"></span>`).join(""); };
+  dots();
+  document.querySelectorAll("[data-key]").forEach(b => b.onclick = async () => {
+    const k = b.dataset.key;
+    if (k === "⌫") code = code.slice(0, -1);
+    else if (code.length < 4) code += k;
+    dots();
+    if (code.length === 4) {
+      const entered = code;
+      const msg = await onDone(entered);
+      if (msg) {
+        code = ""; dots();
+        const m = document.getElementById("padMsg");
+        if (m) { m.textContent = msg; m.classList.add("err"); }
+      }
+    }
+  });
+}
+
+function renderLock() {
+  keypad("Sonics locked", "Enter your passcode", async code => {
+    if (await hashCode(code, state.lock.salt) !== state.lock.hash) return "Wrong passcode. Try again.";
+    locked = false; render();
+  }, `<button class="slip" id="forgotBtn">Forgot passcode?</button>`);
+  document.getElementById("forgotBtn").onclick = () => {
+    if (!confirm("There's no way to recover a passcode: it's only stored on this phone.\n\nYou can erase this phone's Sonics progress and start over (then restore a backup file if you saved one). Erase everything?")) return;
+    if (!confirm("Are you sure? This deletes your streak, games and answers on this phone.")) return;
+    state = null; locked = false;
+    try { localStorage.removeItem(KEY); } catch (e) {}
+    render();
+  };
+}
+
+function setPasscode() {
+  keypad("Choose a passcode", "Pick 4 digits you'll remember", first => {
+    keypad("Confirm passcode", "Enter the same 4 digits again", async second => {
+      if (second !== first) return "Those didn't match. Enter the same 4 digits again.";
+      const salt = Math.random().toString(36).slice(2);
+      state.lock = { salt, hash: await hashCode(second, salt) };
+      save(); alert("Passcode set. The app will ask for it each time you open it."); render();
+    }, `<button class="slip" id="cancelPad">Cancel</button>`);
+    document.getElementById("cancelPad").onclick = () => render();
+  }, `<button class="slip" id="cancelPad">Cancel</button>`);
+  document.getElementById("cancelPad").onclick = () => render();
+}
+
+function removePasscode() {
+  keypad("Turn off passcode", "Enter your current passcode", async code => {
+    if (await hashCode(code, state.lock.salt) !== state.lock.hash) return "Wrong passcode. Try again.";
+    delete state.lock; save(); alert("Passcode turned off."); render();
+  }, `<button class="slip" id="cancelPad">Cancel</button>`);
+  document.getElementById("cancelPad").onclick = () => render();
+}
+
 function planSummary() {
   const p = state.profile, f = FOCUS[p.main];
   const lines = [`Main battle: <b>${esc(f.label)}</b> · check-in ${fmtTime(p.times.main)}`,
@@ -824,6 +913,13 @@ function renderMore() {
   main.innerHTML = `
     ${installed ? "" : `<div class="card"><h2>Put it on your iPhone</h2>
       <p style="margin:0">In Safari, tap the Share button (square with an arrow), then <b>Add to Home Screen</b>.</p></div>`}
+    <div class="card"><h2>Passcode</h2>
+      <p style="margin-top:0" class="muted">${state.lock
+        ? "On. The app asks for your 4-digit code every time you open it."
+        : "Lock the app with a 4-digit code so someone holding your phone can't read your answers."}
+        It's a privacy screen, not bank-level encryption.</p>
+      <button class="ghost" id="lockBtn">${state.lock ? "Turn off passcode" : "Set a passcode"}</button>
+    </div>
     <div class="card"><h2>Your plan</h2>
       ${planSummary()}
       <button class="ghost" id="editPlan">Edit my plan</button>
@@ -849,6 +945,7 @@ function renderMore() {
       <ul class="muted">${DATA.day1.sources.concat(DATA.teamsSource).map(u => `<li><a href="${esc(u)}" target="_blank" rel="noopener">${esc(u.replace(/^https:\/\/(www\.)?/, ""))}</a></li>`).join("")}</ul>
     </div>`;
   document.getElementById("editPlan").onclick = () => startWizard(true);
+  document.getElementById("lockBtn").onclick = () => state.lock ? removePasscode() : setPasscode();
   const code = () => JSON.stringify(state);
   document.getElementById("exportBtn").onclick = () => {
     const blob = new Blob([code()], { type: "application/json" });
@@ -881,11 +978,14 @@ if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
   navigator.serviceWorker.register("sw.js").catch(() => {});
 }
 
-document.addEventListener("visibilitychange", () => { if (!document.hidden && state && !wiz) render(); });
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) { if (state && state.lock) { locked = true; wiz = null; } return; }  // lock as soon as you leave the app
+  if (state && !wiz) render();
+});
 
 // For testing only.
 window.__sonics = { get state() { return state; }, teamRating, playerRating, checkIn, render, newState, daysFree, costPerDay,
-  tasksFor, openTaskCount, startWizard,
+  tasksFor, openTaskCount, startWizard, get locked() { return locked; },
   reset() { state = null; try { localStorage.removeItem(KEY); } catch (e) {} } };
 </script>
 </body>
