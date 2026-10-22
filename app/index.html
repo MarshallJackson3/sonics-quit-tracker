@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <title>Sonics Quit Tracker</title>
 <meta name="theme-color" content="#0b2a20">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -82,8 +82,17 @@ nav button .i { display: block; font-size: 20px; }
 .reveal { animation: pop .5s ease-out; }
 @keyframes pop { from { transform: scale(.92); opacity: 0; } to { transform: none; opacity: 1; } }
 .suspense { text-align: center; padding: 30px 0; font-weight: 700; color: var(--gold); }
-textarea { width: 100%; min-height: 90px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 8px; font: 12px monospace; }
+textarea { width: 100%; min-height: 90px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 8px; font: 16px monospace; }
+/* No double-tap zoom anywhere. */
+html, body, button, a, label, input, select, textarea { touch-action: manipulation; }
 .hidden { display: none; }
+.guide h3 { font-size: 14px; color: var(--gold); margin: 14px 0 4px; }
+.guide p, .guide ul { margin: 0 0 6px; font-size: 15px; }
+.guide ul { padding-left: 18px; }
+.guide li { margin-bottom: 4px; }
+.guide summary { cursor: pointer; list-style: none; }
+.guide summary::-webkit-details-marker { display: none; }
+.guide summary::after { content: " ▾"; color: var(--gold); }
 .breaking { background: var(--loss); color: #fff; border-radius: 10px; padding: 10px; margin: 0 0 8px; font-weight: 700; }
 .lineup { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .pick.lu { text-align: left; padding: 8px 10px; font-size: 14px; }
@@ -914,10 +923,12 @@ const REWARD = {
   cleanNightCap: 0.3,     // cap space for a clean nightly check-in, paid next morning
   winRevenue: 0.25,       // ticket sales from a win
   interviewRevenue: 0.25,
-  interviewMorale: 2,
-  goalMorale: 3,
-  reportMorale: 1,
-  cravingMorale: 2,
+  interviewMorale: 1,
+  goalMorale: 1.5,
+  reportMorale: 0.5,
+  cravingMorale: 1,
+  lineupMorale: 0.5,
+  signingMorale: 1.5,
   cravingCap: 0.1,
   cravingsPerDay: 3,      // only the first 3 beaten cravings a day pay out
   slipMorale: -8,
@@ -1138,7 +1149,7 @@ function signFA(id, years) {
   state.roster.push({ id: fa.id, name: fa.name, pos: fa.pos, g: fa.g, mp: fa.mp, pts: fa.pts, bpm: fa.bpm, vorp: fa.vorp,
     salary: price, years, signed: state.season + 1 });
   state.news.push({ date: today(), type: "SIGNED", text: `Sonics sign ${fa.name} to a ${years}-year deal at ${fmtM(price)} a year.` });
-  award({ morale: 3 }, `Signed ${fa.name}`);
+  award({ morale: REWARD.signingMorale }, `Signed ${fa.name}`);
   save();
   return null;
 }
@@ -1198,7 +1209,7 @@ function wireFreeAgency() {
     const n = Math.max(1, Math.min(4, parseInt(yrs, 10) || 1));
     const err = signFA(fa.id, n);
     if (err) { alert(err); return; }
-    render(); toast(`Signed ${fa.name}! +3 morale`);
+    render(); toast(`Signed ${fa.name}! +${REWARD.signingMorale} morale`);
   });
 }
 
@@ -1234,7 +1245,7 @@ function wireLineup() {
   });
   const save_ = (names, note) => {
     state.lineup = names; state.lineupSet[today()] = true; draftLineup = null;
-    const msg = award({ morale: 1 }, note);
+    const msg = award({ morale: REWARD.lineupMorale }, note);
     save(); render(); toast(msg);
   };
   const s = document.getElementById("luSave");
@@ -1390,6 +1401,10 @@ function taskCard(task) {
 let lastOpenCount = -1;
 function renderToday() {
   let html = statusCard() + econLine();
+  if (!state.seenGuide) {
+    html += `<div class="card guide"><h2>📖 How it works</h2>${howItWorks()}
+      <button class="big" id="guideBtn">Got it, let's play</button></div>`;
+  }
   if (state.profile.needsGoals) {
     html += `<div class="card"><h2>New: daily goals</h2>
       <p style="margin-top:0">Pick up to two goals (working out, studying, reading...). Each one becomes a daily task.</p>
@@ -1418,6 +1433,7 @@ function renderToday() {
   on("#pickGoalsBtn", () => startWizard(true, 2));
   on("#craveBtn", startCraving);
   on("#goFA", () => { tab = "roster"; render(); });
+  on("#guideBtn", () => { state.seenGuide = true; save(); render(); });
   wireLineup();
   on("#reportBtn", () => {
     state.reportsRead[today()] = true;
@@ -1586,6 +1602,34 @@ function removePasscode() {
   document.getElementById("cancelPad").onclick = () => render();
 }
 
+// ---------- how it works ----------
+function howItWorks() {
+  const f = mainFocus(), money = hasMoney();
+  const goals = state.profile.goals.map(g => g.label.toLowerCase()).join(" and ");
+  const sec = (t, body) => `<h3>${t}</h3>${body}`;
+  return [
+    sec("The deal", `<p>You run the Seattle SuperSonics. Every day you win your own battle (${esc(f.label.toLowerCase())}), the Sonics play a game, and the franchise slowly gets better around you.</p>`),
+    sec("Your day", `<ul>
+      <li><b>☀️ Morning report:</b> last night's result, who's 🔥 hot and 🥶 cold, and any breaking news. Tap <b>Collect</b> for the cap space you earned overnight.</li>
+      <li><b>🏀 Lineup:</b> pick 5 starters. Start the hot player, bench the cold one, and use at least one guard and one big.</li>
+      ${goals ? `<li><b>🎯 Goals:</b> answer your ${esc(goals)} check-ins.</li>` : ""}
+      <li><b>🎤 Media interview:</b> answer a reporter's question. It's your journal (Journal tab).</li>
+      <li><b>🏀 Nightly check-in:</b> answer honestly. Yes plays tonight's game. Forgot? It waits for you the next morning.</li>
+    </ul><p class="muted">Tasks unlock at the times you picked (More → Edit my plan). The red number on Today shows how many are waiting.</p>`),
+    sec("Morale", `<p>Every task you do raises team morale a little. High morale helps the Sonics win (up to about 3 points a game). Morale drifts back toward 50 each night, so it reflects how you've been showing up lately.</p>`),
+    sec("Money (game money)", `<ul>
+      <li><b>Cap space:</b> each clean night (paid next morning) and each beaten craving. It pays down the "dead money" you start with, then becomes room to sign free agents.</li>
+      <li><b>Revenue:</b> from wins, interviews and sponsors. Spend it on stadium upgrades (Team tab) for home-court edge and morale.</li>
+    </ul>`),
+    sec("Slips", `<p>Slips happen. You keep your team; the Sonics lose that night's game and some morale. You get 3 free slips per season. After that, each slip makes ownership extend one of your big contracts that was about to expire.</p>`),
+    sec("Seasons and free agency", `<p>82 games, one per check-in. Then a 7-day offseason: free agency opens on the Team tab. Good players want an appealing team (wins, morale, stadium, sponsors). Other teams sign players every day, so don't wait too long.</p>`),
+    sec("Surprises", `<p>The front office works on its own as your clean days add up: trades, a new coach, a new GM. You'll find out in the morning report and News, never before.</p>`),
+    money || f.type === "quit" ? sec("Cravings", `<p>Tap <b>I'm having a craving</b> on Today for a 5-minute ride-it-out timer. Beating one earns morale and cap space (up to 3 a day).</p>`) : "",
+    sec("Privacy", `<p>Everything stays on this phone. Add a passcode under More. Back up now and then (More → Save backup file).</p>`),
+    sec("What's real", `<p>Players, salaries, stats, coaches and GMs are real. Games, trades, hires and all the money are simulated. Seattle doesn't have an NBA team yet.</p>`),
+  ].join("");
+}
+
 function planSummary() {
   const p = state.profile, f = FOCUS[p.main];
   const lines = [`Main battle: <b>${esc(f.label)}</b> · check-in ${fmtTime(p.times.main)}`,
@@ -1647,6 +1691,7 @@ function renderMore() {
   main.innerHTML = `
     ${installed ? "" : `<div class="card"><h2>Put it on your iPhone</h2>
       <p style="margin:0">In Safari, tap the Share button (square with an arrow), then <b>Add to Home Screen</b>.</p></div>`}
+    <div class="card guide"><details><summary><h2 style="display:inline">📖 How it works</h2></summary>${howItWorks()}</details></div>
     <div class="card"><h2>Passcode</h2>
       <p style="margin-top:0" class="muted">${state.lock
         ? "On. The app asks for your 4-digit code every time you open it."
@@ -1723,7 +1768,7 @@ document.addEventListener("visibilitychange", () => {
 window.__sonics = { get state() { return state; }, teamRating, playerRating, checkIn, render, newState, daysFree, costPerDay,
   tasksFor, openTaskCount, startWizard, makeQuestion, upgradeStadium, award, playGame,
   capRoom, payroll, deadMoney, appeal, priceFor, signFA, availableFAs, interested, dailyForm, lineupRating, starterNames,
-  coachBonus, makeTrade, breakingNews, get locked() { return locked; },
+  coachBonus, makeTrade, breakingNews, formAdj, get locked() { return locked; },
   reset() { state = null; try { localStorage.removeItem(KEY); } catch (e) {} } };
 </script>
 </body>

@@ -62,6 +62,11 @@ function check(name, ok, detail = "") {
   check("goal times default to 10 AM and 4 PM", s.profile.goals[0].time === "10:00" && s.profile.goals[1].time === "16:00");
   // Surprise moves are tested on their own below; keep this season's roster fixed.
   await page.evaluate(() => { const m = window.__sonics.state.moves; m.nextTrade = 1e9; m.coachStage = 99; m.gmStage = 99; });
+  check("how-it-works guide shows once after sign-up", (await page.textContent(".guide")).includes("Morale"));
+  await page.click("#guideBtn");
+  check("guide dismissed", (await page.$("#guideBtn")) === null && (await S()).seenGuide === true);
+  check("no double-tap zoom", await page.evaluate(() => document.querySelector('meta[name=viewport]').content.includes("maximum-scale=1")
+    && getComputedStyle(document.body).touchAction === "manipulation"));
   check("no tasks before day 1", (await page.$(".tasks-head")) === null && (await page.textContent("main")).includes("Day 1 is"));
 
   // Day 1 (Oct 22). At 8 AM only the morning report is open.
@@ -73,7 +78,7 @@ function check(name, ok, detail = "") {
   check("check-in locked until evening", (await page.$("[data-clean]")) === null);
   check("morning report says day 1", (await page.textContent(".task")).includes("Day 1"));
   await page.click("#reportBtn");
-  check("reading the report: +1 morale", (await S()).econ.morale === 51);
+  check("reading the report: +0.5 morale", (await S()).econ.morale === 50.5);
 
   // Lineup: pick 5 guards (no big) -> warning; fix it; lock in.
   const guards = await page.evaluate(() => window.__sonics.state.roster.filter(p => /G/.test(p.pos) && !/C|PF/.test(p.pos)).map(p => p.name));
@@ -87,16 +92,19 @@ function check(name, ok, detail = "") {
   check("warning gone with a big", (await page.$(".warn")) === null);
   await page.click("#luSave");
   s = await S();
-  check("lineup saved", s.lineup.length === 5 && s.lineup.includes(bigMan) && s.lineupSet["2026-10-22"] && s.econ.morale === 52);
+  check("lineup saved", s.lineup.length === 5 && s.lineup.includes(bigMan) && s.lineupSet["2026-10-22"] && s.econ.morale === 51);
   check("starters play first", await page.evaluate(b => window.__sonics.starterNames().includes(b), bigMan));
   const lr = await page.evaluate(() => {
     const S_ = window.__sonics, d = "2026-10-22", f = S_.dailyForm(d), st = S_.state, keep = st.lineup;
-    const others = st.roster.filter(p => p.name !== f.hot && p.name !== f.cold).map(p => p.name);
-    st.lineup = [f.hot].concat(others.slice(0, 4)); const withHot = S_.lineupRating(d);
-    st.lineup = [f.cold].concat(others.slice(0, 4)); const withCold = S_.lineupRating(d);
-    st.lineup = keep; return withHot - withCold;
+    const hot = st.roster.find(p => p.name === f.hot), cold = st.roster.find(p => p.name === f.cold);
+    // Same five, with the hot player as a starter: rating goes up by his bonus x his minutes share.
+    const others = st.roster.filter(p => p !== hot && p !== cold).map(p => p.name).slice(0, 4);
+    st.lineup = [hot.name].concat(others); const r1 = S_.lineupRating(d);
+    const base = S_.formAdj(hot, d);
+    st.lineup = keep;
+    return { hotAdj: base, coldAdj: S_.formAdj(cold, d), r1 };
   });
-  check("starting the hot player beats starting the cold one", lr > 0.5, lr.toFixed(2));
+  check("hot player +2, cold player -2 tonight", lr.hotAdj === 2 && lr.coldAdj === -2, JSON.stringify(lr));
   await setDay(1, 21);
   await page.evaluate(() => window.__sonics.render());
   check("9 PM: four open tasks", await page.evaluate(() => window.__sonics.openTaskCount()) === 4);
@@ -108,7 +116,7 @@ function check(name, ok, detail = "") {
   s = await S();
   check("interview answer saved to journal", s.journal.length === 1 && s.journal[0].a.includes("done with pouches") && s.journal[0].day === 1);
   check("interview pays revenue, morale and first sponsor",
-    s.econ.revenue === 0.75 && s.econ.deals.length === 1 && s.econ.morale === 52 + 2, JSON.stringify([s.econ.revenue, s.econ.morale]));
+    s.econ.revenue === 0.75 && s.econ.deals.length === 1 && s.econ.morale === 52, JSON.stringify([s.econ.revenue, s.econ.morale]));
   check("interview makes a news item", s.news.some(n => n.type === "PRESSER" && n.text.includes("President Marshall")));
   await page.click("[data-goal-yes=workout]");
   await page.click("[data-goal-no=skill]");
@@ -118,7 +126,7 @@ function check(name, ok, detail = "") {
   await page.waitForSelector(".final");
   s = await S();
   check("clean check-in: cap space waits for the morning", s.econ.cap === 0 && s.econ.pending.length === 1 && s.econ.pending[0].cap === 0.3);
-  check("morale settles overnight toward 50", s.econ.morale === 57 + Math.round((50 - 57) * 0.3), String(s.econ.morale));
+  check("morale settles overnight toward 50", s.econ.morale === 53.5 + Math.round((50 - 53.5) * 0.3), String(s.econ.morale));
   check("check-in plays game 1", s.log.length === 1 && s.log[0].game.no === 1 && s.log[0].date === "2026-10-22");
   check("streak is 1", (await page.textContent("#streak")) === "1");
   check("all tasks done", (await page.textContent("main")).includes("All done for today"));
@@ -294,6 +302,7 @@ function check(name, ok, detail = "") {
   // Edit the plan from More: change the morning report time.
   await page.click("nav button[data-tab=more]");
   check("plan summary shows goals", (await page.textContent("main")).includes("Real estate exam"));
+  check("More has the how-it-works guide", (await page.textContent(".guide summary")).includes("How it works"));
   await page.click("#editPlan");
   await page.click("#wNext");
   await page.click("#wNext");
